@@ -13,7 +13,7 @@ const execAsync = promisify(exec);
 const config = {
     botNumber: '628972538700', // Ganti dengan nomor WhatsApp bot
     ownerNumber: '628972538700', // Ganti dengan nomor owner
-    usePairingCode: true, // true = pairing code, false = QR code
+    usePairingCode: false, // true = pairing code, false = QR code
 }
 
 const prefixList = ['#', '!', '.', '$', '/'];
