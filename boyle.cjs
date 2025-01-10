@@ -16,6 +16,7 @@ const { Boom } = require('@hapi/boom')
 const pino = require('pino')
 const path = require('path')
 const fs = require('fs')
+const fetch = require('fetch')
 const qrcode = require('qrcode')
 const readline = require('readline')
 const axios = require('axios')
@@ -118,17 +119,19 @@ for (const dir of [SESSION_DIR, TEMP_DIR]) {
 }
 
 // Utility Functions
-const downloadMedia = async (message, messageType) => {
+const downloadMedia = async (message, type) => {
     try {
-        const stream = await downloadContentFromMessage(message[messageType], messageType.split('M')[0])
-        let buffer = Buffer.from([])
+        if (!message[type]) throw new Error('Media not found');
+        
+        const stream = await downloadContentFromMessage(message[type], type.split('Message')[0]);
+        let buffer = Buffer.from([]);
         for await (const chunk of stream) {
-            buffer = Buffer.concat([buffer, chunk])
+            buffer = Buffer.concat([buffer, chunk]);
         }
-        return buffer
+        return buffer;
     } catch (error) {
-        console.error('Error downloading media:', error)
-        throw error
+        console.error('Download media error:', error);
+        throw new Error('Failed to download media');
     }
 }
 
@@ -333,51 +336,88 @@ const makeCurlRequest = async (url, options = {}) => {
     });
 };
 
-// Enhanced API handlers with better error handling
-const handleInstagramDownload = async (sock, msg, args) => {
-    if (!Array.isArray(args)) args = [args];
-    
-    if (!args[0]) {
+// Sticker Handler
+const handleStickerCommand = async (sock, msg) => {
+    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted) {
         await sock.sendMessage(msg.from, {
-            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
-        });
+            text: '❌ Reply to an image/video with .sticker command'
+        }, { quoted: msg });
+        return;
+    }
+
+    const messageType = Object.keys(quoted)[0];
+    if (!['imageMessage', 'videoMessage'].includes(messageType)) {
+        await sock.sendMessage(msg.from, {
+            text: '❌ Reply to an image/video only!'
+        }, { quoted: msg });
         return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Processing Instagram download..._' + WATERMARK
-    });
+        text: '⏳ Creating sticker...'
+    }, { quoted: msg });
 
     try {
-        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(args[0])}`);
+        const media = await downloadMedia(quoted, messageType);
+        const stickerBuffer = await createSticker(media, messageType === 'imageMessage' ? 'image' : 'video');
         
-        if (!response?.data?.[0]?.url) {
-            throw new Error('No media URL found in response');
-        }
-
-        const mediaUrl = response.data[0].url;
-        const isVideo = mediaUrl.toLowerCase().includes('.mp4');
-
         await sock.sendMessage(msg.from, {
-            [isVideo ? 'video' : 'image']: { url: mediaUrl },
-            caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
-            ...(isVideo && { mimetype: 'video/mp4' })
-        });
+            sticker: stickerBuffer
+        }, { quoted: msg });
 
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        console.error('Instagram download error:', error);
+        console.error('Sticker creation error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '*❌ Failed to download Instagram media. Please try again later.*' + WATERMARK
+            text: '❌ Failed to create sticker. Please try again.'
+        });
+    }
+};
+
+// ToImage Handler
+const handleToImageCommand = async (sock, msg) => {
+    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    if (!quoted?.stickerMessage) {
+        await sock.sendMessage(msg.from, {
+            text: '❌ Reply to a sticker with .toimg command'
+        }, { quoted: msg });
+        return;
+    }
+
+    const processingMsg = await sock.sendMessage(msg.from, {
+        text: '_⏳ Converting sticker to image..._'
+    }, { quoted: msg });
+
+    try {
+        const stickerData = await downloadMedia(quoted, 'stickerMessage');
+        const outputPath = path.join(TEMP_DIR, `${Date.now()}.png`);
+        
+        await sharp(stickerData)
+            .png()
+            .toFile(outputPath);
+
+        const imageBuffer = await fs.promises.readFile(outputPath);
+        await fs.promises.unlink(outputPath);
+
+        await sock.sendMessage(msg.from, {
+            image: imageBuffer,
+            caption: '✅ Sticker converted to image'
+        }, { quoted: msg });
+
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
+    } catch (error) {
+        console.error('ToImage conversion error:', error);
+        await sock.sendMessage(msg.from, {
+            edit: processingMsg.key,
+            text: '❌ Failed to convert sticker to image'
         });
     }
 };
 
 const handleTikTokDownload = async (sock, msg, args) => {
-    if (!Array.isArray(args)) args = [args];
-    
-    if (!args[0]) {
+    if (!Array.isArray(args) || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
         });
@@ -389,26 +429,39 @@ const handleTikTokDownload = async (sock, msg, args) => {
     });
 
     try {
-        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(args[0])}`);
+        const response = await fetch(
+            `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(args[0])}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        const jsonData = await response.json();
         
-        if (!response?.data?.data?.hdplay) {
-            throw new Error('No video URL found in response');
+        // Pastikan response valid dan ada data
+        if (!jsonData.success || !jsonData.data?.data?.data?.hdplay) {
+            throw new Error('Failed to get video URL');
         }
 
-        const videoData = response.data.data;
+        const videoData = jsonData.data.data.data;
+        const videoUrl = videoData.hdplay;
+
         const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
             `*Title:* ${videoData.title || 'N/A'}\n` +
             `*Author:* ${videoData.author?.nickname || 'N/A'}\n` +
             `*Duration:* ${videoData.duration || 'N/A'}s\n` +
-            `*Views:* ${videoData.play_count || 'N/A'}\n` +
-            `*Likes:* ${videoData.digg_count || 'N/A'}` +
+            `*Views:* ${videoData.play_count?.toLocaleString() || 'N/A'}\n` +
+            `*Likes:* ${videoData.digg_count?.toLocaleString() || 'N/A'}` +
             WATERMARK;
 
         await sock.sendMessage(msg.from, {
-            video: { url: videoData.hdplay },
+            video: { url: videoUrl },
             caption: caption,
             mimetype: 'video/mp4'
-        });
+        }, { quoted: msg });
 
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
@@ -420,40 +473,190 @@ const handleTikTokDownload = async (sock, msg, args) => {
     }
 };
 
-const handlePinterestSearch = async (sock, msg, args) => {
+const handleInstagramDownload = async (sock, msg, args) => {
     if (!Array.isArray(args) || !args[0]) {
         await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a search query*' + WATERMARK
+            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
         });
         return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Searching Pinterest..._' + WATERMARK
+        text: '_Processing Instagram download..._' + WATERMARK
     });
 
     try {
-        const query = args.join(' ');
-        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/search/pinterest?query=${encodeURIComponent(query)}`);
+        const response = await fetch(
+            `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(args[0])}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            }
+        );
 
-        if (!Array.isArray(response) || response.length === 0) {
-            throw new Error('No results found');
+        const jsonData = await response.json();
+        
+        // Pastikan response valid dan ada data
+        if (!jsonData.status || !jsonData.data || !jsonData.data[0]?.url) {
+            throw new Error('Failed to get media URL');
         }
 
-        const maxImages = Math.min(5, response.length); // Limit to 5 images
-        for (let i = 0; i < maxImages; i++) {
-            await sock.sendMessage(msg.from, {
-                image: { url: response[i] },
-                caption: `*${BOT_NAME} Pinterest Search*` + WATERMARK
-            });
-        }
+        const mediaUrl = jsonData.data[0].url;
+        const isVideo = mediaUrl.toLowerCase().includes('.mp4');
+
+        await sock.sendMessage(msg.from, {
+            [isVideo ? 'video' : 'image']: { url: mediaUrl },
+            caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
+            mimetype: isVideo ? 'video/mp4' : 'image/jpeg'
+        }, { quoted: msg });
 
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        console.error('Pinterest search error:', error);
+        console.error('Instagram download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '*❌ Failed to search Pinterest. Please try again later.*' + WATERMARK
+            text: '*❌ Failed to download Instagram media. Please try again later.*' + WATERMARK
+        });
+    }
+};
+
+// Screenshot Web Handler dengan Polling
+const handleSSWeb = async (sock, msg, args) => {
+    if (!Array.isArray(args) || !args[0]) {
+        await sock.sendMessage(msg.from, {
+            text: '*⚠️ Please provide a URL to screenshot*' + WATERMARK
+        });
+        return;
+    }
+
+    try {
+        // Kirim polling untuk mode
+        const pollMessage = await sock.sendMessage(msg.from, {
+            poll: {
+                name: '*Choose Screenshot Mode :*',
+                values: ['Full Page', 'Desktop View', 'Mobile View'],
+                selectableCount: 1
+            }
+        });
+
+        // Simpan informasi polling
+        const polls = {};
+        polls[pollMessage.key.id] = {
+            url: args[0],
+            msg: msg
+        };
+
+        // Event listener untuk polling (diasumsikan ada di main file)
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                if (update.key.id === pollMessage.key.id && update.pollUpdates) {
+                    const selectedOption = update.pollUpdates[0]?.options[0]?.name;
+                    if (selectedOption) {
+                        // Hapus pesan polling
+                        await sock.sendMessage(msg.from, { delete: pollMessage.key });
+
+                        // Tentukan mode berdasarkan pilihan
+                        let mode;
+                        switch (selectedOption) {
+                            case 'Full Page':
+                                mode = 'full';
+                                break;
+                            case 'Desktop View':
+                                mode = 'desktop';
+                                break;
+                            case 'Mobile View':
+                                mode = 'phone';
+                                break;
+                            default:
+                                mode = 'full';
+                        }
+
+                        const processingMsg = await sock.sendMessage(msg.from, {
+                            text: '_Taking screenshot..._' + WATERMARK
+                        });
+
+                        try {
+                            const ssUrl = `https://api.ryzendesu.vip/api/tool/ssweb?url=${encodeURIComponent(polls[pollMessage.key.id].url)}&mode=${mode}`;
+                            
+                            await sock.sendMessage(msg.from, {
+                                image: { url: ssUrl },
+                                caption: `*Screenshot Web*\nMode: ${selectedOption}` + WATERMARK
+                            }, { quoted: msg });
+
+                            await sock.sendMessage(msg.from, { delete: processingMsg.key });
+                        } catch (error) {
+                            console.error('Screenshot error:', error);
+                            await sock.sendMessage(msg.from, {
+                                edit: processingMsg.key,
+                                text: '*❌ Failed to take screenshot. Please try again later.*' + WATERMARK
+                            });
+                        }
+
+                        // Hapus dari daftar polls
+                        delete polls[pollMessage.key.id];
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('SSWeb error:', error);
+        await sock.sendMessage(msg.from, {
+            text: '*❌ Failed to process screenshot request*' + WATERMARK
+        });
+    }
+};
+
+// Spotify Downloader Handler
+const handleSpotifyDownload = async (sock, msg, args) => {
+    if (!Array.isArray(args) || !args[0]) {
+        await sock.sendMessage(msg.from, {
+            text: '*⚠️ Please provide a Spotify URL*' + WATERMARK
+        });
+        return;
+    }
+
+    const processingMsg = await sock.sendMessage(msg.from, {
+        text: '_Processing Spotify download..._' + WATERMARK
+    });
+
+    try {
+        const response = await fetch(
+            `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(args[0])}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        const jsonData = await response.json();
+        
+        if (!jsonData.success || !jsonData.link || !jsonData.metadata) {
+            throw new Error('Failed to get audio URL');
+        }
+
+        const caption = `*${BOT_NAME} Spotify Downloader*\n\n` +
+            `*Title:* ${jsonData.metadata.title}\n` +
+            `*Artist:* ${jsonData.metadata.artists}\n` +
+            `*Album:* ${jsonData.metadata.album}\n` +
+            `*Release Date:* ${jsonData.metadata.releaseDate}` +
+            WATERMARK;
+
+        await sock.sendMessage(msg.from, {
+            audio: { url: jsonData.link },
+            mimetype: 'audio/mp3',
+            caption: caption
+        }, { quoted: msg });
+
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
+    } catch (error) {
+        console.error('Spotify download error:', error);
+        await sock.sendMessage(msg.from, {
+            edit: processingMsg.key,
+            text: '*❌ Failed to download Spotify audio. Please try again later.*' + WATERMARK
         });
     }
 };
@@ -555,6 +758,16 @@ const handleIncomingMessage = async (sock, msg) => {
             case 'tt':
             case 't':
                 await handleTikTokDownload(sock, serialized, args[0])
+                break
+                
+            case 'spotify':
+            case 'spo':
+                await handleSpotifyDownload(sock, serialized, args[0])
+                break
+                
+            case 'ss':
+            case 'ssweb':
+                await handleSSWeb(sock, serialized, args[0])
                 break
 
             case 'ig':
