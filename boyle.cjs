@@ -144,72 +144,6 @@ const replyMessage = async (sock, msg, text) => {
     }, { quoted: msg })
 }
 
-// Enhanced Sticker Creation Function with Author
-const createSticker = async (mediaData, type) => {
-    const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`)
-    const outputFile = tempFile + '.webp'
-    
-    await writeFile(tempFile, mediaData)
-
-    try {
-        if (type === 'image') {
-            await sharp(tempFile)
-                .resize(512, 512, {
-                    fit: 'contain',
-                    background: { r: 0, g: 0, b: 0, alpha: 0 }
-                })
-                .webp({
-                    quality: 95,
-                    lossless: true
-                })
-                .toFile(outputFile)
-
-            // Add metadata for author
-            const exif = {
-                'sticker-pack-id': `${BOT_NAME}_${Date.now()}`,
-                'sticker-pack-name': BOT_NAME,
-                'sticker-pack-publisher': STICKER_AUTHOR,
-            }
-
-            const exifBuffer = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00])
-            const jsonBuffer = Buffer.from(JSON.stringify(exif))
-            const exifLength = jsonBuffer.length
-            const result = Buffer.concat([exifBuffer, jsonBuffer])
-            
-            // Write exif data to file
-            fs.writeFileSync(outputFile, result)
-        } else {
-            await new Promise((resolve, reject) => {
-                ffmpeg(tempFile)
-                    .outputOptions([
-                        "-vcodec", "libwebp",
-                        "-vf", "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse",
-                        "-loop", "0",
-                        "-ss", "00:00:00",
-                        "-t", "00:00:10",
-                        "-preset", "default",
-                        "-an",
-                        "-vsync", "0",
-                        "-metadata", `author="${STICKER_AUTHOR}"`
-                    ])
-                    .toFormat('webp')
-                    .save(outputFile)
-                    .on('end', resolve)
-                    .on('error', reject)
-            })
-        }
-
-        const stickerBuffer = fs.readFileSync(outputFile)
-        fs.unlinkSync(tempFile)
-        fs.unlinkSync(outputFile)
-        return stickerBuffer
-    } catch (error) {
-        if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile)
-        if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile)
-        throw error
-    }
-}
-
 // Convert Sticker to Image Function
 const convertStickerToImage = async (stickerData) => {
     const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.webp`)
@@ -313,171 +247,216 @@ const cloneBot = async (sock, msg) => {
     })
 }
 
-// Message Handler Functions
-const handleStickerCommand = async (sock, msg) => {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage
-    if (!quoted) {
-        await replyMessage(sock, msg, '❌ Reply to an image/video with .sticker command')
-        return
-    }
-
-    const messageType = Object.keys(quoted)[0]
-    if (!['imageMessage', 'videoMessage'].includes(messageType)) {
-        await replyMessage(sock, msg, '❌ Reply to an image/video only!')
-        return
-    }
-
+// Enhanced Sticker Creation Function with Updated Author
+const createSticker = async (mediaData, type) => {
+    const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`)
+    const outputFile = tempFile + '.webp'
+    
+    await writeFile(tempFile, mediaData)
     try {
-        await replyMessage(sock, msg, '⏳ Creating sticker...')
-        const media = await downloadMedia(quoted, messageType)
-        const stickerBuffer = await createSticker(media, messageType === 'imageMessage' ? 'image' : 'video')
-        
-        await sock.sendMessage(msg.from, {
-            sticker: stickerBuffer,
-            contextInfo: {
-                stanzaId: msg.id,
-                participant: msg.sender,
-                quotedMessage: msg.message
+        if (type === 'image') {
+            await sharp(tempFile)
+                .resize(512, 512, {
+                    fit: 'contain',
+                    background: { r: 0, g: 0, b: 0, alpha: 0 }
+                })
+                .webp({
+                    quality: 95,
+                    lossless: true
+                })
+                .toFile(outputFile)
+            
+            // Updated metadata with new author
+            const exif = {
+                'sticker-pack-id': `${BOT_NAME}_${Date.now()}`,
+                'sticker-pack-name': BOT_NAME,
+                'sticker-pack-publisher': 'boyle anak tonggi',
             }
-        }, { quoted: msg })
+            const exifBuffer = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00])
+            const jsonBuffer = Buffer.from(JSON.stringify(exif))
+            const result = Buffer.concat([exifBuffer, jsonBuffer])
+            
+            await fs.promises.writeFile(outputFile, result)
+        } else {
+            await new Promise((resolve, reject) => {
+                ffmpeg(tempFile)
+                    .outputOptions([
+                        "-vcodec", "libwebp",
+                        "-vf", "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse",
+                        "-loop", "0",
+                        "-ss", "00:00:00",
+                        "-t", "00:00:10",
+                        "-preset", "default",
+                        "-an",
+                        "-vsync", "0",
+                        "-metadata", 'author="boyle anak tonggi"'
+                    ])
+                    .toFormat('webp')
+                    .save(outputFile)
+                    .on('end', resolve)
+                    .on('error', reject)
+            })
+        }
+        
+        const stickerBuffer = await fs.promises.readFile(outputFile)
+        await Promise.all([
+            fs.promises.unlink(tempFile),
+            fs.promises.unlink(outputFile)
+        ])
+        return stickerBuffer
     } catch (error) {
-        console.error('Error creating sticker:', error)
-        await replyMessage(sock, msg, '❌ Failed to create sticker')
+        await Promise.all([
+            fs.existsSync(tempFile) && fs.promises.unlink(tempFile),
+            fs.existsSync(outputFile) && fs.promises.unlink(outputFile)
+        ])
+        throw error
     }
 }
 
-// Handle ToImg Command
-const handleToImageCommand = async (sock, msg) => {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage
-    if (!quoted || !quoted.stickerMessage) {
-        await replyMessage(sock, msg, '❌ Reply to a sticker with .toimg command')
-        return
+// Utility function for making curl requests
+const makeCurlRequest = async (url, options = {}) => {
+    const { exec } = require('child_process');
+    const curlCommand = `curl -s "${url}"`;
+    
+    return new Promise((resolve, reject) => {
+        exec(curlCommand, (error, stdout, stderr) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+            try {
+                resolve(JSON.parse(stdout));
+            } catch (e) {
+                resolve(stdout);
+            }
+        });
+    });
+};
+
+// Enhanced API handlers with better error handling
+const handleInstagramDownload = async (sock, msg, args) => {
+    if (!Array.isArray(args)) args = [args];
+    
+    if (!args[0]) {
+        await sock.sendMessage(msg.from, {
+            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
+        });
+        return;
     }
+
+    const processingMsg = await sock.sendMessage(msg.from, {
+        text: '_Processing Instagram download..._' + WATERMARK
+    });
 
     try {
-        await replyMessage(sock, msg, '⏳ Converting sticker to image...')
-        const stickerData = await downloadMedia(quoted, 'stickerMessage')
-        const imageBuffer = await convertStickerToImage(stickerData)
+        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(args[0])}`);
         
-        await sock.sendMessage(msg.from, {
-            image: imageBuffer,
-            caption: '✅ Sticker converted to image',
-            contextInfo: {
-                stanzaId: msg.id,
-                participant: msg.sender,
-                quotedMessage: msg.message
-            }, { quoted: msg })
-    } catch (error) {
-        console.error('Error converting sticker:', error)
-        await replyMessage(sock, msg, '❌ Failed to convert sticker to image')
-    }
-}
+        if (!response?.data?.[0]?.url) {
+            throw new Error('No media URL found in response');
+        }
 
-// Handle TikTok Download
+        const mediaUrl = response.data[0].url;
+        const isVideo = mediaUrl.toLowerCase().includes('.mp4');
+
+        await sock.sendMessage(msg.from, {
+            [isVideo ? 'video' : 'image']: { url: mediaUrl },
+            caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
+            ...(isVideo && { mimetype: 'video/mp4' })
+        });
+
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
+    } catch (error) {
+        console.error('Instagram download error:', error);
+        await sock.sendMessage(msg.from, {
+            edit: processingMsg.key,
+            text: '*❌ Failed to download Instagram media. Please try again later.*' + WATERMARK
+        });
+    }
+};
+
 const handleTikTokDownload = async (sock, msg, args) => {
+    if (!Array.isArray(args)) args = [args];
+    
     if (!args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
-        })
-        return
+        });
+        return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
         text: '_Processing TikTok download..._' + WATERMARK
-    })
+    });
 
     try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/aiodown?url=${args[0]}`)
-        const videoData = response.data.data.data
+        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(args[0])}`);
         
+        if (!response?.data?.data?.hdplay) {
+            throw new Error('No video URL found in response');
+        }
+
+        const videoData = response.data.data;
         const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
-            `*Title:* ${videoData.title}\n` +
-            `*Author:* ${videoData.author.nickname}\n` +
-            `*Duration:* ${videoData.duration}s\n` +
-            `*Views:* ${videoData.play_count}\n` +
-            `*Likes:* ${videoData.digg_count}` +
-            WATERMARK
+            `*Title:* ${videoData.title || 'N/A'}\n` +
+            `*Author:* ${videoData.author?.nickname || 'N/A'}\n` +
+            `*Duration:* ${videoData.duration || 'N/A'}s\n` +
+            `*Views:* ${videoData.play_count || 'N/A'}\n` +
+            `*Likes:* ${videoData.digg_count || 'N/A'}` +
+            WATERMARK;
 
         await sock.sendMessage(msg.from, {
             video: { url: videoData.hdplay },
             caption: caption,
             mimetype: 'video/mp4'
-        })
+        });
 
-        await sock.sendMessage(msg.from, { delete: processingMsg.key })
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        logger.error('TikTok download error:', error)
+        console.error('TikTok download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '_*❌ Failed to download TikTok video*_' + WATERMARK
-        })
+            text: '*❌ Failed to download TikTok media. Please try again later.*' + WATERMARK
+        });
     }
-}
-
-const handleInstagramDownload = async (sock, msg, args) => {
-    if (!args[0]) {
-        await sock.sendMessage(msg.from, {
-            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
-        })
-        return
-    }
-
-    const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Processing Instagram download..._' + WATERMARK
-    })
-
-    try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/igdl?url=${args[0]}`)
-        const mediaUrl = response.data.data[0].url
-
-        await sock.sendMessage(msg.from, {
-            video: { url: mediaUrl },
-            caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
-            mimetype: 'video/mp4'
-        })
-
-        await sock.sendMessage(msg.from, { delete: processingMsg.key })
-    } catch (error) {
-        logger.error('Instagram download error:', error)
-        await sock.sendMessage(msg.from, {
-            edit: processingMsg.key,
-            text: '*❌ Failed to download Instagram media*' + WATERMARK
-        })
-    }
-}
+};
 
 const handlePinterestSearch = async (sock, msg, args) => {
-    if (!args[0]) {
+    if (!Array.isArray(args) || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a search query*' + WATERMARK
-        })
-        return
+        });
+        return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
         text: '_Searching Pinterest..._' + WATERMARK
-    })
+    });
 
     try {
-        const query = args.join(' ')
-        const response = await axios.get(`https://api.ryzendesu.vip/api/search/pinterest?query=${query}`)
+        const query = args.join(' ');
+        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/search/pinterest?query=${encodeURIComponent(query)}`);
 
-        for (const imageUrl of response.data) {
-            await sock.sendMessage(msg.from, {
-                image: { url: imageUrl },
-                caption: `*${BOT_NAME} Pinterest Search*` + WATERMARK
-            })
+        if (!Array.isArray(response) || response.length === 0) {
+            throw new Error('No results found');
         }
 
-        await sock.sendMessage(msg.from, { delete: processingMsg.key })
+        const maxImages = Math.min(5, response.length); // Limit to 5 images
+        for (let i = 0; i < maxImages; i++) {
+            await sock.sendMessage(msg.from, {
+                image: { url: response[i] },
+                caption: `*${BOT_NAME} Pinterest Search*` + WATERMARK
+            });
+        }
+
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        logger.error('Pinterest search error:', error)
+        console.error('Pinterest search error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '*❌ Failed to search Pinterest*' + WATERMARK
-        })
+            text: '*❌ Failed to search Pinterest. Please try again later.*' + WATERMARK
+        });
     }
-}
+};
 
 // Handle Group Commands
 const handleGroupCommand = async (sock, msg, command, args) => {
