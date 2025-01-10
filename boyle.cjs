@@ -249,71 +249,7 @@ const cloneBot = async (sock, msg) => {
     })
 }
 
-// Enhanced Sticker Creation Function with Updated Author
-const createSticker = async (mediaData, type) => {
-    const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`)
-    const outputFile = tempFile + '.webp'
-    
-    await writeFile(tempFile, mediaData)
-    try {
-        if (type === 'image') {
-            await sharp(tempFile)
-                .resize(512, 512, {
-                    fit: 'contain',
-                    background: { r: 0, g: 0, b: 0, alpha: 0 }
-                })
-                .webp({
-                    quality: 95,
-                    lossless: true
-                })
-                .toFile(outputFile)
-            
-            // Updated metadata with new author
-            const exif = {
-                'sticker-pack-id': `${BOT_NAME}_${Date.now()}`,
-                'sticker-pack-name': BOT_NAME,
-                'sticker-pack-publisher': 'boyle anak tonggi',
-            }
-            const exifBuffer = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00])
-            const jsonBuffer = Buffer.from(JSON.stringify(exif))
-            const result = Buffer.concat([exifBuffer, jsonBuffer])
-            
-            await fs.promises.writeFile(outputFile, result)
-        } else {
-            await new Promise((resolve, reject) => {
-                ffmpeg(tempFile)
-                    .outputOptions([
-                        "-vcodec", "libwebp",
-                        "-vf", "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse",
-                        "-loop", "0",
-                        "-ss", "00:00:00",
-                        "-t", "00:00:10",
-                        "-preset", "default",
-                        "-an",
-                        "-vsync", "0",
-                        "-metadata", 'author="boyle anak tonggi"'
-                    ])
-                    .toFormat('webp')
-                    .save(outputFile)
-                    .on('end', resolve)
-                    .on('error', reject)
-            })
-        }
-        
-        const stickerBuffer = await fs.promises.readFile(outputFile)
-        await Promise.all([
-            fs.promises.unlink(tempFile),
-            fs.promises.unlink(outputFile)
-        ])
-        return stickerBuffer
-    } catch (error) {
-        await Promise.all([
-            fs.existsSync(tempFile) && fs.promises.unlink(tempFile),
-            fs.existsSync(outputFile) && fs.promises.unlink(outputFile)
-        ])
-        throw error
-    }
-}
+
 
 // Utility function for making curl requests
 const makeCurlRequest = async (url, options = {}) => {
@@ -335,9 +271,123 @@ const makeCurlRequest = async (url, options = {}) => {
     });
 };
 
-// Sticker Handler
+// Enhanced Sticker Creation Function
+const createSticker = async (mediaData, type) => {
+    const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`);
+    const outputFile = tempFile + '.webp';
+    
+    try {
+        await fs.promises.writeFile(tempFile, mediaData);
+        
+        if (type === 'image') {
+            // Convert image to webp first
+            await sharp(tempFile)
+                .resize(512, 512, {
+                    fit: 'contain',
+                    background: { r: 0, g: 0, b: 0, alpha: 0 }
+                })
+                .webp({ quality: 95 })
+                .toFile(outputFile);
+
+            // Read the webp file
+            const webpBuffer = await fs.promises.readFile(outputFile);
+            
+            // Create ExifReader
+            const exif = {
+                'sticker-pack-id': 'net.waboyle.boylepack',
+                'sticker-pack-name': 'Boyle Pack',
+                'sticker-pack-publisher': 'boyle anak tonggi',
+                'android-app-store-link': 'https://play.google.com/store/apps/details?id=com.whatsapp',
+                'ios-app-store-link': 'https://apps.apple.com/app/whatsapp-messenger/id310633997',
+                'emojis': ['🤖'],
+                'isAvatar': false
+            };
+
+            const exifBuffer = Buffer.from([
+                0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 
+                0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 
+                0x00, 0x00
+            ]);
+            
+            const jsonBuffer = Buffer.from(JSON.stringify(exif));
+            const result = Buffer.concat([webpBuffer, exifBuffer, jsonBuffer]);
+            
+            await fs.promises.writeFile(outputFile, result);
+
+        } else if (type === 'video') {
+            // For video sticker
+            await new Promise((resolve, reject) => {
+                ffmpeg(tempFile)
+                    .inputOptions([
+                        "-y",
+                        "-t", "10" // Limit to 10 seconds
+                    ])
+                    .outputOptions([
+                        "-vcodec", "libwebp",
+                        "-vf", "scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000,setsar=1",
+                        "-loop", "0",
+                        "-ss", "00:00:00.0",
+                        "-t", "10",
+                        "-preset", "default",
+                        "-an",
+                        "-vsync", "0",
+                        "-fs", "1M"
+                    ])
+                    .toFormat('webp')
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .save(outputFile);
+            });
+
+            // Add metadata after video conversion
+            const webpBuffer = await fs.promises.readFile(outputFile);
+            const exif = {
+                'sticker-pack-id': 'net.waboyle.boylepack',
+                'sticker-pack-name': 'Boyle Pack',
+                'sticker-pack-publisher': 'boyle anak tonggi',
+                'android-app-store-link': 'https://play.google.com/store/apps/details?id=com.whatsapp',
+                'ios-app-store-link': 'https://apps.apple.com/app/whatsapp-messenger/id310633997',
+                'emojis': ['🤖'],
+                'isAvatar': false
+            };
+
+            const exifBuffer = Buffer.from([
+                0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 
+                0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 
+                0x00, 0x00
+            ]);
+            
+            const jsonBuffer = Buffer.from(JSON.stringify(exif));
+            const result = Buffer.concat([webpBuffer, exifBuffer, jsonBuffer]);
+            
+            await fs.promises.writeFile(outputFile, result);
+        }
+
+        const finalBuffer = await fs.promises.readFile(outputFile);
+
+        // Cleanup
+        await Promise.all([
+            fs.promises.unlink(tempFile),
+            fs.promises.unlink(outputFile)
+        ].filter(Boolean));
+
+        return finalBuffer;
+    } catch (error) {
+        console.error('Error creating sticker:', error);
+        // Cleanup on error
+        try {
+            if (fs.existsSync(tempFile)) await fs.promises.unlink(tempFile);
+            if (fs.existsSync(outputFile)) await fs.promises.unlink(outputFile);
+        } catch (cleanupError) {
+            console.error('Cleanup error:', cleanupError);
+        }
+        throw error;
+    }
+};
+
+// Updated Sticker Handler
 const handleStickerCommand = async (sock, msg) => {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
     if (!quoted) {
         await sock.sendMessage(msg.from, {
             text: '❌ Reply to an image/video with .sticker command'
@@ -415,8 +465,9 @@ const handleToImageCommand = async (sock, msg) => {
     }
 };
 
-const handleTikTokDownload = async (sock, msg, args) => {
-    if (!Array.isArray(args) || !args[0]) {
+// TikTok Handler
+const handleTikTokDownload = async (sock, msg, url) => {
+    if (!url) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
         });
@@ -429,7 +480,7 @@ const handleTikTokDownload = async (sock, msg, args) => {
 
     try {
         const response = await fetch(
-            `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(args[0])}`,
+            `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`,
             {
                 method: 'GET',
                 headers: {
@@ -440,7 +491,6 @@ const handleTikTokDownload = async (sock, msg, args) => {
 
         const jsonData = await response.json();
         
-        // Pastikan response valid dan ada data
         if (!jsonData.success || !jsonData.data?.data?.data?.hdplay) {
             throw new Error('Failed to get video URL');
         }
@@ -472,8 +522,9 @@ const handleTikTokDownload = async (sock, msg, args) => {
     }
 };
 
-const handleInstagramDownload = async (sock, msg, args) => {
-    if (!Array.isArray(args) || !args[0]) {
+// Instagram Handler
+const handleInstagramDownload = async (sock, msg, url) => {
+    if (!url) {
         await sock.sendMessage(msg.from, {
             text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
         });
@@ -486,7 +537,7 @@ const handleInstagramDownload = async (sock, msg, args) => {
 
     try {
         const response = await fetch(
-            `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(args[0])}`,
+            `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`,
             {
                 method: 'GET',
                 headers: {
@@ -497,7 +548,6 @@ const handleInstagramDownload = async (sock, msg, args) => {
 
         const jsonData = await response.json();
         
-        // Pastikan response valid dan ada data
         if (!jsonData.status || !jsonData.data || !jsonData.data[0]?.url) {
             throw new Error('Failed to get media URL');
         }
@@ -521,95 +571,9 @@ const handleInstagramDownload = async (sock, msg, args) => {
     }
 };
 
-// Screenshot Web Handler dengan Polling
-const handleSSWeb = async (sock, msg, args) => {
-    if (!Array.isArray(args) || !args[0]) {
-        await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a URL to screenshot*' + WATERMARK
-        });
-        return;
-    }
-
-    try {
-        // Kirim polling untuk mode
-        const pollMessage = await sock.sendMessage(msg.from, {
-            poll: {
-                name: '*Choose Screenshot Mode :*',
-                values: ['Full Page', 'Desktop View', 'Mobile View'],
-                selectableCount: 1
-            }
-        });
-
-        // Simpan informasi polling
-        const polls = {};
-        polls[pollMessage.key.id] = {
-            url: args[0],
-            msg: msg
-        };
-
-        // Event listener untuk polling (diasumsikan ada di main file)
-        sock.ev.on('messages.update', async (updates) => {
-            for (const update of updates) {
-                if (update.key.id === pollMessage.key.id && update.pollUpdates) {
-                    const selectedOption = update.pollUpdates[0]?.options[0]?.name;
-                    if (selectedOption) {
-                        // Hapus pesan polling
-                        await sock.sendMessage(msg.from, { delete: pollMessage.key });
-
-                        // Tentukan mode berdasarkan pilihan
-                        let mode;
-                        switch (selectedOption) {
-                            case 'Full Page':
-                                mode = 'full';
-                                break;
-                            case 'Desktop View':
-                                mode = 'desktop';
-                                break;
-                            case 'Mobile View':
-                                mode = 'phone';
-                                break;
-                            default:
-                                mode = 'full';
-                        }
-
-                        const processingMsg = await sock.sendMessage(msg.from, {
-                            text: '_Taking screenshot..._' + WATERMARK
-                        });
-
-                        try {
-                            const ssUrl = `https://api.ryzendesu.vip/api/tool/ssweb?url=${encodeURIComponent(polls[pollMessage.key.id].url)}&mode=${mode}`;
-                            
-                            await sock.sendMessage(msg.from, {
-                                image: { url: ssUrl },
-                                caption: `*Screenshot Web*\nMode: ${selectedOption}` + WATERMARK
-                            }, { quoted: msg });
-
-                            await sock.sendMessage(msg.from, { delete: processingMsg.key });
-                        } catch (error) {
-                            console.error('Screenshot error:', error);
-                            await sock.sendMessage(msg.from, {
-                                edit: processingMsg.key,
-                                text: '*❌ Failed to take screenshot. Please try again later.*' + WATERMARK
-                            });
-                        }
-
-                        // Hapus dari daftar polls
-                        delete polls[pollMessage.key.id];
-                    }
-                }
-            }
-        });
-    } catch (error) {
-        console.error('SSWeb error:', error);
-        await sock.sendMessage(msg.from, {
-            text: '*❌ Failed to process screenshot request*' + WATERMARK
-        });
-    }
-};
-
-// Spotify Downloader Handler
-const handleSpotifyDownload = async (sock, msg, args) => {
-    if (!Array.isArray(args) || !args[0]) {
+// Spotify Handler
+const handleSpotifyDownload = async (sock, msg, url) => {
+    if (!url) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a Spotify URL*' + WATERMARK
         });
@@ -622,7 +586,7 @@ const handleSpotifyDownload = async (sock, msg, args) => {
 
     try {
         const response = await fetch(
-            `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(args[0])}`,
+            `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(url)}`,
             {
                 method: 'GET',
                 headers: {
@@ -656,6 +620,81 @@ const handleSpotifyDownload = async (sock, msg, args) => {
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
             text: '*❌ Failed to download Spotify audio. Please try again later.*' + WATERMARK
+        });
+    }
+};
+
+// Screenshot Web Handler
+const handleSSWeb = async (sock, msg, url) => {
+    if (!url) {
+        await sock.sendMessage(msg.from, {
+            text: '*⚠️ Please provide a URL to screenshot*' + WATERMARK
+        });
+        return;
+    }
+
+    try {
+        const pollMessage = await sock.sendMessage(msg.from, {
+            poll: {
+                name: '*Choose Screenshot Mode:*',
+                values: ['Full Page', 'Desktop View', 'Mobile View'],
+                selectableCount: 1
+            }
+        });
+
+        // Simpan informasi polling
+        const polls = {};
+        polls[pollMessage.key.id] = {
+            url: url,
+            msg: msg
+        };
+
+        // Event listener untuk polling
+        sock.ev.on('messages.update', async (updates) => {
+            for (const update of updates) {
+                if (update.key.id === pollMessage.key.id && update.pollUpdates) {
+                    const selectedOption = update.pollUpdates[0]?.options[0]?.name;
+                    if (selectedOption) {
+                        await sock.sendMessage(msg.from, { delete: pollMessage.key });
+
+                        let mode;
+                        switch (selectedOption) {
+                            case 'Full Page': mode = 'full'; break;
+                            case 'Desktop View': mode = 'desktop'; break;
+                            case 'Mobile View': mode = 'phone'; break;
+                            default: mode = 'full';
+                        }
+
+                        const processingMsg = await sock.sendMessage(msg.from, {
+                            text: '_Taking screenshot..._' + WATERMARK
+                        });
+
+                        try {
+                            const ssUrl = `https://api.ryzendesu.vip/api/tool/ssweb?url=${encodeURIComponent(url)}&mode=${mode}`;
+                            
+                            await sock.sendMessage(msg.from, {
+                                image: { url: ssUrl },
+                                caption: `*Screenshot Web*\nMode: ${selectedOption}` + WATERMARK
+                            }, { quoted: msg });
+
+                            await sock.sendMessage(msg.from, { delete: processingMsg.key });
+                        } catch (error) {
+                            console.error('Screenshot error:', error);
+                            await sock.sendMessage(msg.from, {
+                                edit: processingMsg.key,
+                                text: '*❌ Failed to take screenshot. Please try again later.*' + WATERMARK
+                            });
+                        }
+
+                        delete polls[pollMessage.key.id];
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('SSWeb error:', error);
+        await sock.sendMessage(msg.from, {
+            text: '*❌ Failed to process screenshot request*' + WATERMARK
         });
     }
 };
