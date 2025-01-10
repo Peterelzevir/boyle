@@ -359,22 +359,20 @@ async function connectToWhatsApp(sessionName = 'main-session', isClone = false) 
         version,
         logger,
         printQRInTerminal: true,
-        auth: {
-            creds: state.creds,
-            keys: store.bind(sock.ev)
+        auth: state,
+        getMessage: async (key) => {
+            return await store.loadMessage(key.remoteJid, key.id) || undefined
         },
         generateHighQualityLinkPreview: true,
         browser: [BOT_NAME, 'Chrome', '4.0.0'],
-        getMessage: async (key) => {
-            return await store.loadMessage(key.remoteJid, key.id)
-        }
     })
 
+    // Bind store setelah socket dibuat
     store.bind(sock.ev)
 
     // Connection Update Handler
     sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update
+        const { connection, lastDisconnect } = update
 
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error instanceof Boom) &&
@@ -391,8 +389,10 @@ async function connectToWhatsApp(sessionName = 'main-session', isClone = false) 
         }
     })
 
+    // Handle credentials update
     sock.ev.on('creds.update', saveCreds)
 
+    // Message handler
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type === 'notify') {
             for (const msg of messages) {
@@ -408,7 +408,7 @@ async function connectToWhatsApp(sessionName = 'main-session', isClone = false) 
     return sock
 }
 
-// Pairing Code Handler
+// Pairing Code Function
 async function getPairingCode(sock, number) {
     if (!number.startsWith('+')) {
         number = '+' + number
@@ -444,11 +444,12 @@ async function startBot() {
         
         if (choice === '2') {
             const phoneNumber = await question('\nEnter phone number (e.g., 6281234567890): ')
-            const sock = await connectToWhatsApp()
+            console.log('\nInitializing connection...')
+            const sock = await connectToWhatsApp('main-session')
             await getPairingCode(sock, phoneNumber)
         } else {
-            console.log('\nScan this QR code:')
-            await connectToWhatsApp()
+            console.log('\nGenerating QR Code...')
+            await connectToWhatsApp('main-session')
         }
 
         rl.close()
@@ -457,10 +458,3 @@ async function startBot() {
         process.exit(1)
     }
 }
-
-// Error Handlers
-process.on('uncaughtException', console.error)
-process.on('unhandledRejection', console.error)
-
-// Start the bot
-startBot()
