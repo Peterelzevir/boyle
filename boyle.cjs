@@ -374,9 +374,14 @@ const handleToImageCommand = async (sock, msg) => {
 }
 
 const handleInstagramDownload = async (sock, msg, args) => {
+    // Pastikan args berupa array
+    if (!Array.isArray(args)) {
+        args = [args];
+    }
+
     console.log('Args received (Instagram):', args); // Debug args
 
-    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
+    if (args.length === 0 || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
         });
@@ -438,9 +443,14 @@ const handleInstagramDownload = async (sock, msg, args) => {
 };
 
 const handleTikTokDownload = async (sock, msg, args) => {
+    // Pastikan args berupa array
+    if (!Array.isArray(args)) {
+        args = [args];
+    }
+
     console.log('Args received (TikTok):', args); // Debug args
 
-    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
+    if (args.length === 0 || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
         });
