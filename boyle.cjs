@@ -1,80 +1,64 @@
-/**
- * WhatsApp Bot Implementation
- * Using @whiskeysockets/baileys
- */
+// by hiyaok on telegram
 
 const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
     makeInMemoryStore,
-    downloadMediaMessage,
-    getContentType
+    getContentType,
+    downloadContentFromMessage,
+    isJidGroup
 } = require('@whiskeysockets/baileys')
 const { Boom } = require('@hapi/boom')
 const pino = require('pino')
-const fs = require('fs')
 const path = require('path')
+const fs = require('fs')
 const readline = require('readline')
 const axios = require('axios')
-const sharp = require('sharp')
-const ffmpeg = require('fluent-ffmpeg')
-const { exec } = require('child_process')
-const { removeBackgroundFromImageUrl } = require('remove.bg')
 const FileType = require('file-type')
+const { writeFile } = require('fs/promises')
+const ffmpeg = require('fluent-ffmpeg')
+const sharp = require('sharp')
 
 // Constants
 const SESSION_DIR = './sessions'
 const TEMP_DIR = './temp'
-const BOT_NAME = 'PinemarkBot'
-const OWNER_NUMBER = '628972538700' // Ganti dengan nomor owner
+const BOT_NAME = 'Pinemark'
+const WATERMARK = '\n\n_Powered by @hiyaok on Telegram_'
+const OWNER_NUMBER = '628972538700' // Replace with your number
 
-// ASCII Art
-const ASCII_ART = `
-╔═════════════════════════════════════╗
-║     ╔═╗╦╔╗╔╔═╗╔╦╗╔═╗╦═╗╦╔═         ║
-║     ╠═╝║║║║║╣ ║║║╠═╣╠╦╝╠╩╗         ║
-║     ╩  ╩╝╚╝╚═╝╩ ╩╩ ╩╩╚═╩ ╩         ║
-║                                     ║
-║        WhatsApp Bot Pine            ║
-╚═════════════════════════════════════╝`
+// Help Menu Template
+const helpMenu = `*Command List ${BOT_NAME}*
 
-// Help Menu
-const HELP_MENU = `
-*${BOT_NAME} Command List*
+*Sticker Commands:*
+➤ .s / .sticker - Create sticker from image/video
+➤ .toimg - Convert sticker to image
 
-*1.* Sticker Commands:
-  *.sticker* - Create sticker from image/video
-  *.toimg* - Convert sticker to image
+*Downloader Commands:*
+➤ .tiktok [url] - Download TikTok video
+➤ .ig [url] - Download Instagram post
+➤ .yt [url] - Download YouTube video
 
-*2.* Downloader:
-  *.tiktok [url]* - Download TikTok video
-  *.ig [url]* - Download Instagram post
+*Group Commands:*
+➤ .add [number] - Add member
+➤ .kick [@user] - Remove member
+➤ .promote [@user] - Promote to admin
+➤ .demote [@user] - Demote admin
 
-*3.* Group Commands:
-  *.add [number]* - Add member
-  *.kick [@mention]* - Remove member
-  *.promote [@mention]* - Promote to admin
-  *.demote [@mention]* - Demote from admin
+*Other Commands:*
+➤ .menu - Show this help menu
+➤ .ping - Check bot status
+➤ .owner - Contact bot owner
 
-*4.* Bot Commands:
-  *.menu* - Show this menu
-  *.ping* - Check bot response
-  *.owner* - Get owner contact
-  *.clone [number]* - Clone bot (Owner only)
-
-✨ Made by Pinemark Team`
+${WATERMARK}`
 
 // Logger Configuration
 const logger = pino({
     level: 'silent',
     transport: {
-        target: 'pino-pretty',
-        options: {
-            translateTime: 'SYS:dd-mm-yyyy HH:MM:ss',
-            ignore: 'pid,hostname'
-        }
+        target: 'pino-pretty'
     }
 })
 
@@ -93,314 +77,295 @@ for (const dir of [SESSION_DIR, TEMP_DIR]) {
 }
 
 // Utility Functions
-const getBuffer = async (url) => {
+const downloadMedia = async (message, messageType) => {
     try {
-        const response = await axios.get(url, { responseType: 'arraybuffer' })
-        return Buffer.from(response.data, 'binary')
+        const stream = await downloadContentFromMessage(message[messageType], messageType.split('M')[0])
+        let buffer = Buffer.from([])
+        for await (const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk])
+        }
+        return buffer
     } catch (error) {
-        console.error('Error fetching buffer:', error)
+        console.error('Error downloading media:', error)
         throw error
     }
 }
 
-// Feature Handlers
-async function handleStickerCommand(sock, msg) {
+const serialize = (msg) => {
+    if (!msg.message) return msg
+    const type = getContentType(msg.message) || ''
+    return {
+        ...msg,
+        type,
+        id: msg.key.id,
+        from: msg.key.remoteJid,
+        fromMe: msg.key.fromMe,
+        pushName: msg.pushName || 'User',
+        isGroup: isJidGroup(msg.key.remoteJid),
+        body: type === 'conversation' ? msg.message.conversation :
+              type === 'imageMessage' ? msg.message.imageMessage.caption :
+              type === 'videoMessage' ? msg.message.videoMessage.caption : ''
+    }
+}
+
+// Message Handler Functions
+const handleStickerCommand = async (sock, msg) => {
     const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage
-    const from = msg.key.remoteJid
-    
     if (!quoted) {
-        await sock.sendMessage(from, { text: '❌ Reply to media with .sticker command!' })
+        await sock.sendMessage(msg.from, { text: '❌ Reply to an image/video with .sticker command' })
         return
     }
 
-    const type = Object.keys(quoted)[0]
-    if (!['imageMessage', 'videoMessage'].includes(type)) {
-        await sock.sendMessage(from, { text: '❌ Reply to image/video only!' })
+    const messageType = Object.keys(quoted)[0]
+    if (!['imageMessage', 'videoMessage'].includes(messageType)) {
+        await sock.sendMessage(msg.from, { text: '❌ Reply to an image/video only!' })
         return
     }
-
-    const processing = await sock.sendMessage(from, { text: '_Creating sticker..._' })
 
     try {
-        const media = await downloadMediaMessage(msg, 'buffer')
-        const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${type === 'videoMessage' ? 'mp4' : 'jpg'}`)
-        fs.writeFileSync(tempFile, media)
+        const media = await downloadMedia(quoted, messageType)
+        const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${messageType === 'videoMessage' ? 'mp4' : 'jpg'}`)
+        await writeFile(tempFile, media)
 
-        const outputFile = tempFile + '.webp'
-
-        if (type === 'imageMessage') {
+        // Process media to sticker
+        if (messageType === 'imageMessage') {
             await sharp(tempFile)
                 .resize(512, 512, {
                     fit: 'contain',
                     background: { r: 0, g: 0, b: 0, alpha: 0 }
                 })
                 .toFormat('webp')
-                .toFile(outputFile)
+                .toFile(tempFile + '.webp')
         } else {
+            // For video, convert to WebP
             await new Promise((resolve, reject) => {
                 ffmpeg(tempFile)
-                    .inputFormat('mp4')
-                    .on('error', reject)
-                    .on('end', () => resolve(true))
+                    .toFormat('webp')
                     .addOutputOptions([
-                        '-vcodec', 'libwebp',
                         '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba',
-                        '-loop', '0',
+                        '-vcodec', 'libwebp',
+                        '-lossless', '1',
                         '-preset', 'default',
+                        '-loop', '0',
                         '-an',
                         '-vsync', '0',
-                        '-ss', '00:00:00'
+                        '-t', '10'
                     ])
-                    .toFormat('webp')
-                    .save(outputFile)
+                    .save(tempFile + '.webp')
+                    .on('end', resolve)
+                    .on('error', reject)
             })
         }
 
-        await sock.sendMessage(from, {
-            sticker: { url: outputFile },
-            mimetype: 'image/webp'
+        // Send sticker
+        await sock.sendMessage(msg.from, {
+            sticker: { url: tempFile + '.webp' }
         })
 
         // Cleanup
         fs.unlinkSync(tempFile)
-        fs.unlinkSync(outputFile)
-        await sock.sendMessage(from, { delete: processing.key })
+        fs.unlinkSync(tempFile + '.webp')
 
     } catch (error) {
-        console.error('Sticker creation error:', error)
-        await sock.sendMessage(from, { text: '❌ Failed to create sticker!' })
+        console.error('Error creating sticker:', error)
+        await sock.sendMessage(msg.from, { text: '❌ Failed to create sticker' })
     }
 }
 
-async function handleTikTokDownload(sock, msg, url) {
-    const from = msg.key.remoteJid
-    
+const handleTikTokDownload = async (sock, msg, url) => {
     if (!url) {
-        await sock.sendMessage(from, { text: '❌ Provide TikTok URL!' })
+        await sock.sendMessage(msg.from, { text: '❌ Please provide TikTok URL!' })
         return
     }
-
-    const processing = await sock.sendMessage(from, { text: '_Downloading TikTok..._' })
 
     try {
         const response = await axios.get(`https://api.tiklydown.link/api/download?url=${url}`)
-        const data = response.data
-        
-        await sock.sendMessage(from, {
-            video: { url: data.video.noWatermark },
-            caption: `✅ *TikTok Downloaded*\n\n*Author:* ${data.author.nickname}\n*Description:* ${data.title}`,
-            mimetype: 'video/mp4'
-        })
+        const videoData = response.data
 
-        await sock.sendMessage(from, { delete: processing.key })
+        await sock.sendMessage(msg.from, {
+            video: { url: videoData.video.noWatermark },
+            caption: `✅ Downloaded from TikTok\n\n*Author:* ${videoData.author.nickname}\n*Description:* ${videoData.title}\n\n${WATERMARK}`
+        })
     } catch (error) {
         console.error('TikTok download error:', error)
-        await sock.sendMessage(from, { text: '❌ Failed to download TikTok!' })
+        await sock.sendMessage(msg.from, { text: '❌ Failed to download TikTok video' })
     }
 }
 
-async function handleInstagramDownload(sock, msg, url) {
-    const from = msg.key.remoteJid
-    
+const handleInstagramDownload = async (sock, msg, url) => {
     if (!url) {
-        await sock.sendMessage(from, { text: '❌ Provide Instagram URL!' })
+        await sock.sendMessage(msg.from, { text: '❌ Please provide Instagram URL!' })
         return
     }
-
-    const processing = await sock.sendMessage(from, { text: '_Downloading Instagram..._' })
 
     try {
         const response = await axios.get(`https://insta-dl.herokuapp.com/download?url=${url}`)
         const mediaUrl = response.data.media_url
-        
-        await sock.sendMessage(from, {
-            video: { url: mediaUrl },
-            caption: '✅ *Instagram Downloaded*',
-            mimetype: 'video/mp4'
-        })
 
-        await sock.sendMessage(from, { delete: processing.key })
+        await sock.sendMessage(msg.from, {
+            video: { url: mediaUrl },
+            caption: `✅ Downloaded from Instagram\n\n${WATERMARK}`
+        })
     } catch (error) {
         console.error('Instagram download error:', error)
-        await sock.sendMessage(from, { text: '❌ Failed to download Instagram!' })
+        await sock.sendMessage(msg.from, { text: '❌ Failed to download Instagram content' })
     }
 }
 
-async function handleGroupCommand(sock, msg, command, args) {
-    const from = msg.key.remoteJid
-    
+// Group Command Handlers
+const handleGroupCommand = async (sock, msg, command, args) => {
     if (!msg.isGroup) {
-        await sock.sendMessage(from, { text: '❌ Group command only!' })
+        await sock.sendMessage(msg.from, { text: '❌ This command can only be used in groups!' })
         return
     }
 
     try {
-        const groupMetadata = await sock.groupMetadata(from)
+        const groupMetadata = await sock.groupMetadata(msg.from)
         const isAdmin = groupMetadata.participants.find(p => p.id === msg.sender)?.admin
-        const botNumber = sock.user.id
-        const isBotAdmin = groupMetadata.participants.find(p => p.id === botNumber)?.admin
 
-        if (!isAdmin || !isBotAdmin) {
-            await sock.sendMessage(from, { text: '❌ Need admin access!' })
+        if (!isAdmin) {
+            await sock.sendMessage(msg.from, { text: '❌ You need to be an admin to use this command!' })
             return
         }
 
         switch (command) {
             case 'add':
-                if (!args[0]) return
+                if (!args[0]) {
+                    await sock.sendMessage(msg.from, { text: '❌ Provide a number to add!' })
+                    return
+                }
                 const number = args[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net'
-                await sock.groupParticipantsUpdate(from, [number], 'add')
+                await sock.groupParticipantsUpdate(msg.from, [number], 'add')
                 break
 
             case 'kick':
-                const user = msg.message.extendedTextMessage?.contextInfo?.participant
-                if (!user) return
-                await sock.groupParticipantsUpdate(from, [user], 'remove')
+                if (!msg.message.extendedTextMessage?.contextInfo?.participant) {
+                    await sock.sendMessage(msg.from, { text: '❌ Tag someone to kick!' })
+                    return
+                }
+                const user = msg.message.extendedTextMessage.contextInfo.participant
+                await sock.groupParticipantsUpdate(msg.from, [user], 'remove')
                 break
 
             case 'promote':
             case 'demote':
-                const participant = msg.message.extendedTextMessage?.contextInfo?.participant
-                if (!participant) return
-                await sock.groupParticipantsUpdate(from, [participant], command === 'promote' ? 'promote' : 'demote')
+                if (!msg.message.extendedTextMessage?.contextInfo?.participant) {
+                    await sock.sendMessage(msg.from, { text: `❌ Tag someone to ${command}!` })
+                    return
+                }
+                const participant = msg.message.extendedTextMessage.contextInfo.participant
+                await sock.groupParticipantsUpdate(msg.from, [participant], command === 'promote' ? 'promote' : 'demote')
                 break
         }
-
     } catch (error) {
         console.error('Group command error:', error)
-        await sock.sendMessage(from, { text: '❌ Command failed!' })
+        await sock.sendMessage(msg.from, { text: '❌ Failed to execute group command' })
     }
 }
 
 // Main Message Handler
-async function handleIncomingMessage(sock, msg) {
-    if (!msg.message) return
+const handleIncomingMessage = async (sock, msg) => {
+    if (!msg.body.startsWith('.')) return
 
-    const type = getContentType(msg.message)
-    const from = msg.key.remoteJid
-    const isGroup = from.endsWith('@g.us')
-    const sender = isGroup ? msg.key.participant : msg.key.remoteJid
-    const isOwner = sender === OWNER_NUMBER + '@s.whatsapp.net'
-    const body = type === 'conversation' ? msg.message.conversation :
-                 type === 'extendedTextMessage' ? msg.message.extendedTextMessage.text :
-                 type === 'imageMessage' ? msg.message.imageMessage.caption :
-                 type === 'videoMessage' ? msg.message.videoMessage.caption : ''
+    const [command, ...args] = msg.body.slice(1).toLowerCase().split(' ')
+    const fullArgs = args.join(' ')
 
-    // Log message for debugging
-    console.log(`[MSG] From: ${sender}, Type: ${type}, Body: ${body}`)
+    try {
+        switch (command) {
+            case 'menu':
+            case 'help':
+                await sock.sendMessage(msg.from, { text: helpMenu })
+                break
 
-    if (body.startsWith('.')) {
-        const [command, ...args] = body.slice(1).toLowerCase().trim().split(/ +/)
-        
-        try {
-            switch (command) {
-                case 'menu':
-                case 'help':
-                    await sock.sendMessage(from, { text: HELP_MENU })
-                    break
+            case 's':
+            case 'sticker':
+                await handleStickerCommand(sock, msg)
+                break
 
-                case 'sticker':
-                case 's':
-                    await handleStickerCommand(sock, msg)
-                    break
+            case 'tiktok':
+            case 'tt':
+                await handleTikTokDownload(sock, msg, args[0])
+                break
 
-                case 'tiktok':
-                    await handleTikTokDownload(sock, msg, args[0])
-                    break
+            case 'ig':
+            case 'insta':
+                await handleInstagramDownload(sock, msg, args[0])
+                break
 
-                case 'ig':
-                    await handleInstagramDownload(sock, msg, args[0])
-                    break
+            case 'add':
+            case 'kick':
+            case 'promote':
+            case 'demote':
+                await handleGroupCommand(sock, msg, command, args)
+                break
 
-                case 'add':
-                case 'kick':
-                case 'promote':
-                case 'demote':
-                    await handleGroupCommand(sock, msg, command, args)
-                    break
+            case 'ping':
+            case 'cek':
+                const start = Date.now()
+                await sock.sendMessage(msg.from, { text: 'Testing ping...' })
+                const end = Date.now()
+                await sock.sendMessage(msg.from, { text: `🏓 Pong!\n💫 Speed: ${end - start}ms` })
+                break
 
-                case 'ping':
-                    const start = Date.now()
-                    await sock.sendMessage(from, { text: 'Testing ping...' })
-                    await sock.sendMessage(from, { text: `🏓 Pong!\n💫 Response: ${Date.now() - start}ms` })
-                    break
+            case 'owner':
+            case 'own':
+                const ownerContact = {
+                    displayName: 'Pinemark Owner',
+                    vcard: `BEGIN:VCARD\nVERSION:3.0\nFN:pinemark\nTEL;type=CELL;type=VOICE;waid=${OWNER_NUMBER}:+${OWNER_NUMBER}\nEND:VCARD`
+                }
+                await sock.sendMessage(msg.from, { contacts: { contacts: [ownerContact] } })
+                break
 
-                case 'owner':
-                    const vcard = 'BEGIN:VCARD\n' +
-                                'VERSION:3.0\n' +
-                                `FN:${BOT_NAME} Owner\n` +
-                                `TEL;type=CELL;type=VOICE;waid=${OWNER_NUMBER}:+${OWNER_NUMBER}\n` +
-                                'END:VCARD'
-                    
-                    await sock.sendMessage(from, { 
-                        contacts: { 
-                            displayName: 'Owner', 
-                            contacts: [{ vcard }] 
-                        }
-                    })
-                    break
-
-                default:
-                    await sock.sendMessage(from, { text: '❌ Unknown command! Use .menu' })
-            }
-        } catch (error) {
-            console.error('Command error:', error)
-            await sock.sendMessage(from, { text: '❌ Command failed!' })
+            default:
+                await sock.sendMessage(msg.from, { text: '❌ Unknown command! Use .menu to see available commands.' })
         }
+    } catch (error) {
+        console.error('Error handling command:', error)
+        await sock.sendMessage(msg.from, { text: '❌ An error occurred while processing your command' })
     }
 }
 
 // Connection Function
-async function connectToWhatsApp(sessionName = 'main-session', isClone = false) {
-    const { state, saveCreds } = await useMultiFileAuthState(path.join(SESSION_DIR, sessionName))
-    const { version } = await fetchLatestBaileysVersion()
-
+const connectToWhatsApp = async () => {
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR)
     const sock = makeWASocket({
-        version,
         logger,
         printQRInTerminal: true,
-        auth: state,
-        getMessage: async (key) => {
-            return await store.loadMessage(key.remoteJid, key.id) || undefined
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, logger)
         },
-        generateHighQualityLinkPreview: true,
-        browser: [BOT_NAME, 'Chrome', '4.0.0'],
+        defaultQueryTimeoutMs: undefined,
+        browser: [BOT_NAME, 'Safari', '5.6.8']
     })
 
-    // Bind store setelah socket dibuat
     store.bind(sock.ev)
 
     // Connection Update Handler
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update
-
+    sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error instanceof Boom) &&
-                lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
-
-            console.log('Connection closed due to', lastDisconnect?.error?.output?.statusCode)
-
+            const shouldReconnect = (lastDisconnect?.error instanceof Boom) ? 
+                lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut : true
+            console.log('Connection closed due to', lastDisconnect?.error, ', reconnecting:', shouldReconnect)
             if (shouldReconnect) {
-                console.log('Reconnecting...')
-                await connectToWhatsApp(sessionName, isClone)
+                connectToWhatsApp()
             }
         } else if (connection === 'open') {
-            console.log(isClone ? 'Clone bot connected!' : 'Bot connected!')
+            console.log('Connected successfully!')
         }
     })
 
-    // Handle credentials update
     sock.ev.on('creds.update', saveCreds)
 
-    // Message handler
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type === 'notify') {
-            for (const msg of messages) {
-                try {
-                    await handleIncomingMessage(sock, msg)
-                } catch (error) {
-                    console.error('Error handling message:', error)
-                }
+        if (type !== 'notify') return
+
+        for (const msg of messages) {
+            try {
+                const serialized = serialize(msg)
+                await handleIncomingMessage(sock, serialized)
+            } catch (error) {
+                console.error('Error processing message:', error)
             }
         }
     })
@@ -408,53 +373,15 @@ async function connectToWhatsApp(sessionName = 'main-session', isClone = false) 
     return sock
 }
 
-// Pairing Code Function
-async function getPairingCode(sock, number) {
-    if (!number.startsWith('+')) {
-        number = '+' + number
-    }
-    
-    try {
-        const code = await sock.requestPairingCode(number)
-        console.log('='.repeat(50))
-        console.log('YOUR PAIRING CODE:', code)
-        console.log('='.repeat(50))
-        return code
-    } catch (error) {
-        console.error('Failed to get pairing code:', error)
-        throw error
-    }
-}
-
 // Start Bot Function
-async function startBot() {
-    console.clear()
-    console.log(ASCII_ART)
-    console.log('\nStarting WhatsApp Bot...\n')
-
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    })
-
-    const question = (text) => new Promise((resolve) => rl.question(text, resolve))
-
-    try {
-        const choice = await question('Choose login method:\n1. QR Code\n2. Pairing Code\nEnter choice (1/2): ')
-        
-        if (choice === '2') {
-            const phoneNumber = await question('\nEnter phone number (e.g., 6281234567890): ')
-            console.log('\nInitializing connection...')
-            const sock = await connectToWhatsApp('main-session')
-            await getPairingCode(sock, phoneNumber)
-        } else {
-            console.log('\nGenerating QR Code...')
-            await connectToWhatsApp('main-session')
-        }
-
-        rl.close()
-    } catch (error) {
-        console.error('Failed to start bot:', error)
-        process.exit(1)
-    }
+const startBot = async () => {
+    console.log('Starting WhatsApp Bot...')
+    await connectToWhatsApp()
 }
+
+// Error Handlers
+process.on('uncaughtException', console.error)
+process.on('unhandledRejection', console.error)
+
+// Start the bot
+startBot()
