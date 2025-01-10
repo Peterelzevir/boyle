@@ -306,7 +306,7 @@ const handleIncomingMessage = async (sock, msg) => {
 
             case 'owner':
                 const ownerContact = {
-                    displayName: 'Owner',
+                    displayName: 'Pinemark Owner',
                     vcard: `BEGIN:VCARD\nVERSION:3.0\nFN:pinemark\nTEL;type=CELL;type=VOICE;waid=${OWNER_NUMBER}:+${OWNER_NUMBER}\nEND:VCARD`
                 }
                 await sock.sendMessage(msg.from, { contacts: { contacts: [ownerContact] } })
@@ -340,7 +340,8 @@ const connectToWhatsApp = async () => {
     // Connection Update Handler
     sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut
+            const shouldReconnect = (lastDisconnect?.error instanceof Boom) ? 
+                lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut : true
             console.log('Connection closed due to', lastDisconnect?.error, ', reconnecting:', shouldReconnect)
             if (shouldReconnect) {
                 connectToWhatsApp()
