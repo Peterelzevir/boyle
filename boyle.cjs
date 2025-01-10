@@ -374,33 +374,42 @@ const handleToImageCommand = async (sock, msg) => {
 }
 
 const handleTikTokDownload = async (sock, msg, args) => {
-    if (!args[0]) {
+    // Cek apakah args adalah array dan memiliki setidaknya satu elemen
+    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
-        })
-        return
+        });
+        return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '👁‍🗨 _Processing TikTok download..._' + WATERMARK
-    })
+        text: '_Processing TikTok download..._' + WATERMARK
+    });
 
     try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${args[0]}`)
-        const videoData = response.data.data.data
-        const mediaUrl = videoData.hdplay
+        // Panggil API untuk mengunduh video TikTok
+        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${args[0]}`);
+        console.log('API Response:', response.data); // Log respons API untuk debugging
+
+        // Pastikan data yang diharapkan ada dalam respons
+        if (!response.data || !response.data.data || !response.data.data.data) {
+            throw new Error('Invalid API response structure');
+        }
+
+        const videoData = response.data.data.data;
+        const mediaUrl = videoData.hdplay;
 
         // Buat caption dengan informasi video
-        const caption = `✅ *${BOT_NAME} TikTok Downloader*\n\n` +
+        const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
             `*Title:* ${videoData.title}\n` +
             `*Author:* ${videoData.author.nickname}\n` +
             `*Duration:* ${videoData.duration}s\n` +
             `*Views:* ${videoData.play_count}\n` +
             `*Likes:* ${videoData.digg_count}` +
-            WATERMARK
+            WATERMARK;
 
         // Cek apakah ini video atau foto dari URL
-        const isVideo = mediaUrl.toLowerCase().includes('.mp4')
+        const isVideo = mediaUrl.toLowerCase().includes('.mp4');
 
         if (isVideo) {
             // Kirim sebagai video
@@ -408,102 +417,119 @@ const handleTikTokDownload = async (sock, msg, args) => {
                 video: { url: mediaUrl },
                 caption: caption,
                 mimetype: 'video/mp4'
-            })
+            });
         } else {
             // Kirim sebagai gambar jika bukan video
             await sock.sendMessage(msg.from, {
                 image: { url: mediaUrl },
                 caption: caption
-            })
+            });
         }
 
         // Hapus pesan processing
-        await sock.sendMessage(msg.from, { delete: processingMsg.key })
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        console.error('TikTok download error:', error)
+        console.error('TikTok download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
             text: '*❌ Failed to download TikTok media*' + WATERMARK
-        })
+        });
     }
-}
+};
 
 const handleInstagramDownload = async (sock, msg, args) => {
-    if (!args[0]) {
+    // Cek apakah args adalah array dan memiliki setidaknya satu elemen
+    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
-        })
-        return
+        });
+        return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '👀 _Processing Instagram download..._' + WATERMARK
-    })
+        text: '_Processing Instagram download..._' + WATERMARK
+    });
 
     try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/igdl?url=${args[0]}`)
-        const mediaUrl = response.data.data[0].url
+        // Panggil API untuk mengunduh media Instagram
+        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/igdl?url=${args[0]}`);
+        console.log('API Response:', response.data); // Log respons API untuk debugging
+
+        // Pastikan data yang diharapkan ada dalam respons
+        if (!response.data || !response.data.data || response.data.data.length === 0) {
+            throw new Error('Invalid API response structure');
+        }
+
+        const mediaUrl = response.data.data[0].url;
 
         // Cek tipe media dari URL (foto atau video)
-        const isVideo = mediaUrl.toLowerCase().includes('.mp4')
+        const isVideo = mediaUrl.toLowerCase().includes('.mp4');
 
         if (isVideo) {
             await sock.sendMessage(msg.from, {
                 video: { url: mediaUrl },
-                caption: `✅ *${BOT_NAME} Instagram Downloader*` + WATERMARK,
+                caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
                 mimetype: 'video/mp4'
-            })
+            });
         } else {
             // Jika bukan video, kirim sebagai gambar
             await sock.sendMessage(msg.from, {
                 image: { url: mediaUrl },
-                caption: `✅ *${BOT_NAME} Instagram Downloader*` + WATERMARK
-            })
+                caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK
+            });
         }
 
         // Hapus pesan "processing"
-        await sock.sendMessage(msg.from, { delete: processingMsg.key })
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        console.error('Instagram download error:', error)
+        console.error('Instagram download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
             text: '*❌ Failed to download Instagram media*' + WATERMARK
-        })
+        });
     }
-}
+};
 
 const handlePinterestSearch = async (sock, msg, args) => {
-    if (!args[0]) {
+    // Cek apakah args adalah array dan memiliki setidaknya satu elemen
+    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a search query*' + WATERMARK
-        })
-        return
+        });
+        return;
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
         text: '_Searching Pinterest..._' + WATERMARK
-    })
+    });
 
     try {
-        const query = args.join(' ')
-        const response = await axios.get(`https://api.ryzendesu.vip/api/search/pinterest?query=${query}`)
+        const query = args.join(' ');
+        const response = await axios.get(`https://api.ryzendesu.vip/api/search/pinterest?query=${encodeURIComponent(query)}`);
+        console.log('API Response:', response.data); // Log respons API untuk debugging
+
+        // Pastikan data yang diharapkan ada dalam respons
+        if (!Array.isArray(response.data) || response.data.length === 0) {
+            throw new Error('No results found for the given query');
+        }
 
         for (const imageUrl of response.data) {
             await sock.sendMessage(msg.from, {
                 image: { url: imageUrl },
                 caption: `*${BOT_NAME} Pinterest Search*` + WATERMARK
-            })
+            });
         }
 
-        await sock.sendMessage(msg.from, { delete: processingMsg.key })
+        // Hapus pesan "processing"
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
-        logger.error('Pinterest search error:', error)
+        console.error('Pinterest search error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
             text: '*❌ Failed to search Pinterest*' + WATERMARK
-        })
+        });
     }
-}
+};
 
 // Handle Group Commands
 const handleGroupCommand = async (sock, msg, command, args) => {
