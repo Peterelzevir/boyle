@@ -346,7 +346,6 @@ const handleStickerCommand = async (sock, msg) => {
     }
 }
 
-// Handle ToImg Command
 const handleToImageCommand = async (sock, msg) => {
     const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage
     if (!quoted || !quoted.stickerMessage) {
@@ -355,7 +354,7 @@ const handleToImageCommand = async (sock, msg) => {
     }
 
     try {
-        await replyMessage(sock, msg, '⏳ Converting sticker to image...')
+        await replyMessage(sock, msg, '_⏳ Converting sticker to image..._')
         const stickerData = await downloadMedia(quoted, 'stickerMessage')
         const imageBuffer = await convertStickerToImage(stickerData)
         
@@ -366,7 +365,8 @@ const handleToImageCommand = async (sock, msg) => {
                 stanzaId: msg.id,
                 participant: msg.sender,
                 quotedMessage: msg.message
-            }, { quoted: msg })
+            }
+        }, { quoted: msg }) // Perbaikan: letakkan { quoted: msg } di luar objek utama
     } catch (error) {
         console.error('Error converting sticker:', error)
         await replyMessage(sock, msg, '❌ Failed to convert sticker to image')
