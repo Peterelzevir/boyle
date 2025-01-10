@@ -313,93 +313,99 @@ const cloneBot = async (sock, msg) => {
     })
 }
 
-// Message Handler Functions
-const handleStickerCommand = async (sock, msg) => {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage
-    if (!quoted) {
-        await replyMessage(sock, msg, '❌ Reply to an image/video with .sticker command')
-        return
-    }
-
-    const messageType = Object.keys(quoted)[0]
-    if (!['imageMessage', 'videoMessage'].includes(messageType)) {
-        await replyMessage(sock, msg, '❌ Reply to an image/video only!')
-        return
-    }
-
+// Enhanced Sticker Creation Function with Updated Author
+const createSticker = async (mediaData, type) => {
+    const tempFile = path.join(TEMP_DIR, `temp_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`)
+    const outputFile = tempFile + '.webp'
+    
+    await writeFile(tempFile, mediaData)
     try {
-        await replyMessage(sock, msg, '⏳ Creating sticker...')
-        const media = await downloadMedia(quoted, messageType)
-        const stickerBuffer = await createSticker(media, messageType === 'imageMessage' ? 'image' : 'video')
-        
-        await sock.sendMessage(msg.from, {
-            sticker: stickerBuffer,
-            contextInfo: {
-                stanzaId: msg.id,
-                participant: msg.sender,
-                quotedMessage: msg.message
+        if (type === 'image') {
+            await sharp(tempFile)
+                .resize(512, 512, {
+                    fit: 'contain',
+                    background: { r: 0, g: 0, b: 0, alpha: 0 }
+                })
+                .webp({
+                    quality: 95,
+                    lossless: true
+                })
+                .toFile(outputFile)
+            
+            // Updated metadata with new author
+            const exif = {
+                'sticker-pack-id': `${BOT_NAME}_${Date.now()}`,
+                'sticker-pack-name': BOT_NAME,
+                'sticker-pack-publisher': 'boyle anak tonggi',
             }
-        }, { quoted: msg })
+            const exifBuffer = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00])
+            const jsonBuffer = Buffer.from(JSON.stringify(exif))
+            const result = Buffer.concat([exifBuffer, jsonBuffer])
+            
+            await fs.promises.writeFile(outputFile, result)
+        } else {
+            await new Promise((resolve, reject) => {
+                ffmpeg(tempFile)
+                    .outputOptions([
+                        "-vcodec", "libwebp",
+                        "-vf", "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse",
+                        "-loop", "0",
+                        "-ss", "00:00:00",
+                        "-t", "00:00:10",
+                        "-preset", "default",
+                        "-an",
+                        "-vsync", "0",
+                        "-metadata", 'author="boyle anak tonggi"'
+                    ])
+                    .toFormat('webp')
+                    .save(outputFile)
+                    .on('end', resolve)
+                    .on('error', reject)
+            })
+        }
+        
+        const stickerBuffer = await fs.promises.readFile(outputFile)
+        await Promise.all([
+            fs.promises.unlink(tempFile),
+            fs.promises.unlink(outputFile)
+        ])
+        return stickerBuffer
     } catch (error) {
-        console.error('Error creating sticker:', error)
-        await replyMessage(sock, msg, '❌ Failed to create sticker')
+        await Promise.all([
+            fs.existsSync(tempFile) && fs.promises.unlink(tempFile),
+            fs.existsSync(outputFile) && fs.promises.unlink(outputFile)
+        ])
+        throw error
     }
 }
 
-const handleToImageCommand = async (sock, msg) => {
-    const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage
-    if (!quoted || !quoted.stickerMessage) {
-        await replyMessage(sock, msg, '❌ Reply to a sticker with .toimg command')
-        return
-    }
-
-    try {
-        await replyMessage(sock, msg, '_⏳ Converting sticker to image..._')
-        const stickerData = await downloadMedia(quoted, 'stickerMessage')
-        const imageBuffer = await convertStickerToImage(stickerData)
-        
-        await sock.sendMessage(msg.from, {
-            image: imageBuffer,
-            caption: '✅ Sticker converted to image',
-            contextInfo: {
-                stanzaId: msg.id,
-                participant: msg.sender,
-                quotedMessage: msg.message
+// Utility function for making curl requests
+const makeCurlRequest = async (url, options = {}) => {
+    const { exec } = require('child_process');
+    const curlCommand = `curl -s "${url}"`;
+    
+    return new Promise((resolve, reject) => {
+        exec(curlCommand, (error, stdout, stderr) => {
+            if (error) {
+                reject(error);
+                return;
             }
-        }, { quoted: msg }) // Perbaikan: letakkan { quoted: msg } di luar objek utama
-    } catch (error) {
-        console.error('Error converting sticker:', error)
-        await replyMessage(sock, msg, '❌ Failed to convert sticker to image')
-    }
-}
+            try {
+                resolve(JSON.parse(stdout));
+            } catch (e) {
+                resolve(stdout);
+            }
+        });
+    });
+};
 
+// Enhanced API handlers with better error handling
 const handleInstagramDownload = async (sock, msg, args) => {
-    // Pastikan args berupa array
-    if (!Array.isArray(args)) {
-        args = [args];
-    }
-
-    console.log('Args received (Instagram):', args); // Debug args
-
-    if (args.length === 0 || !args[0]) {
+    if (!Array.isArray(args)) args = [args];
+    
+    if (!args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
-        });
-        return;
-    }
-
-    const isValidUrl = (url) => {
-        try {
-            new URL(url);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    };
-
-    if (!isValidUrl(args[0])) {
-        await sock.sendMessage(msg.from, {
-            text: '*_⚠️ Please provide a valid Instagram URL_*' + WATERMARK
         });
         return;
     }
@@ -409,66 +415,37 @@ const handleInstagramDownload = async (sock, msg, args) => {
     });
 
     try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/igdl?url=${args[0]}`);
-        console.log('API Response (Instagram):', response.data);
-
-        if (!response.data || !response.data.data || response.data.data.length === 0) {
-            throw new Error('Invalid API response structure');
+        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(args[0])}`);
+        
+        if (!response?.data?.[0]?.url) {
+            throw new Error('No media URL found in response');
         }
 
-        const mediaUrl = response.data.data[0].url;
+        const mediaUrl = response.data[0].url;
         const isVideo = mediaUrl.toLowerCase().includes('.mp4');
 
-        if (isVideo) {
-            await sock.sendMessage(msg.from, {
-                video: { url: mediaUrl },
-                caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
-                mimetype: 'video/mp4'
-            });
-        } else {
-            await sock.sendMessage(msg.from, {
-                image: { url: mediaUrl },
-                caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK
-            });
-        }
+        await sock.sendMessage(msg.from, {
+            [isVideo ? 'video' : 'image']: { url: mediaUrl },
+            caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
+            ...(isVideo && { mimetype: 'video/mp4' })
+        });
 
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
         console.error('Instagram download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '*❌ Failed to download Instagram media*' + WATERMARK
+            text: '*❌ Failed to download Instagram media. Please try again later.*' + WATERMARK
         });
     }
 };
 
 const handleTikTokDownload = async (sock, msg, args) => {
-    // Pastikan args berupa array
-    if (!Array.isArray(args)) {
-        args = [args];
-    }
-
-    console.log('Args received (TikTok):', args); // Debug args
-
-    if (args.length === 0 || !args[0]) {
+    if (!Array.isArray(args)) args = [args];
+    
+    if (!args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
-        });
-        return;
-    }
-
-    const isValidUrl = (url) => {
-        try {
-            new URL(url);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    };
-
-    if (!isValidUrl(args[0])) {
-        await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a valid TikTok URL*' + WATERMARK
         });
         return;
     }
@@ -478,50 +455,39 @@ const handleTikTokDownload = async (sock, msg, args) => {
     });
 
     try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${args[0]}`);
-        console.log('API Response (TikTok):', response.data);
-
-        if (!response.data || !response.data.data || !response.data.data.data) {
-            throw new Error('Invalid API response structure');
+        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(args[0])}`);
+        
+        if (!response?.data?.data?.hdplay) {
+            throw new Error('No video URL found in response');
         }
 
-        const videoData = response.data.data.data;
-        const mediaUrl = videoData.hdplay;
-
+        const videoData = response.data.data;
         const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
-            `*Title:* ${videoData.title}\n` +
-            `*Author:* ${videoData.author.nickname}\n` +
-            `*Duration:* ${videoData.duration}s\n` +
-            `*Views:* ${videoData.play_count}\n` +
-            `*Likes:* ${videoData.digg_count}` +
+            `*Title:* ${videoData.title || 'N/A'}\n` +
+            `*Author:* ${videoData.author?.nickname || 'N/A'}\n` +
+            `*Duration:* ${videoData.duration || 'N/A'}s\n` +
+            `*Views:* ${videoData.play_count || 'N/A'}\n` +
+            `*Likes:* ${videoData.digg_count || 'N/A'}` +
             WATERMARK;
 
-        if (mediaUrl.toLowerCase().includes('.mp4')) {
-            await sock.sendMessage(msg.from, {
-                video: { url: mediaUrl },
-                caption: caption,
-                mimetype: 'video/mp4'
-            });
-        } else {
-            await sock.sendMessage(msg.from, {
-                image: { url: mediaUrl },
-                caption: caption
-            });
-        }
+        await sock.sendMessage(msg.from, {
+            video: { url: videoData.hdplay },
+            caption: caption,
+            mimetype: 'video/mp4'
+        });
 
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
         console.error('TikTok download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '*❌ Failed to download TikTok media*' + WATERMARK
+            text: '*❌ Failed to download TikTok media. Please try again later.*' + WATERMARK
         });
     }
 };
 
 const handlePinterestSearch = async (sock, msg, args) => {
-    // Cek apakah args adalah array dan memiliki setidaknya satu elemen
-    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
+    if (!Array.isArray(args) || !args[0]) {
         await sock.sendMessage(msg.from, {
             text: '*⚠️ Please provide a search query*' + WATERMARK
         });
@@ -534,28 +500,26 @@ const handlePinterestSearch = async (sock, msg, args) => {
 
     try {
         const query = args.join(' ');
-        const response = await axios.get(`https://api.ryzendesu.vip/api/search/pinterest?query=${encodeURIComponent(query)}`);
-        console.log('API Response:', response.data); // Log respons API untuk debugging
+        const response = await makeCurlRequest(`https://api.ryzendesu.vip/api/search/pinterest?query=${encodeURIComponent(query)}`);
 
-        // Pastikan data yang diharapkan ada dalam respons
-        if (!Array.isArray(response.data) || response.data.length === 0) {
-            throw new Error('No results found for the given query');
+        if (!Array.isArray(response) || response.length === 0) {
+            throw new Error('No results found');
         }
 
-        for (const imageUrl of response.data) {
+        const maxImages = Math.min(5, response.length); // Limit to 5 images
+        for (let i = 0; i < maxImages; i++) {
             await sock.sendMessage(msg.from, {
-                image: { url: imageUrl },
+                image: { url: response[i] },
                 caption: `*${BOT_NAME} Pinterest Search*` + WATERMARK
             });
         }
 
-        // Hapus pesan "processing"
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
         console.error('Pinterest search error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '*❌ Failed to search Pinterest*' + WATERMARK
+            text: '*❌ Failed to search Pinterest. Please try again later.*' + WATERMARK
         });
     }
 };
