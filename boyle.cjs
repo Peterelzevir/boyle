@@ -27,7 +27,7 @@ const SESSION_DIR = './sessions'
 const TEMP_DIR = './temp'
 const BOT_NAME = 'Pinemark'
 const WATERMARK = '\n\n_Powered by @hiyaok on Telegram_'
-const OWNER_NUMBER = '628972538700' // Replace with your number
+const OWNER_NUMBER = '6281280174445' // Replace with your number
 
 // Help Menu Template
 const helpMenu = `*Command List ${BOT_NAME}*
