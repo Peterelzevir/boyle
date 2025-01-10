@@ -373,7 +373,6 @@ const handleToImageCommand = async (sock, msg) => {
     }
 }
 
-// Handle TikTok Download
 const handleTikTokDownload = async (sock, msg, args) => {
     if (!args[0]) {
         await sock.sendMessage(msg.from, {
@@ -383,14 +382,16 @@ const handleTikTokDownload = async (sock, msg, args) => {
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Processing TikTok download..._' + WATERMARK
+        text: '👁‍🗨 _Processing TikTok download..._' + WATERMARK
     })
 
     try {
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/aiodown?url=${args[0]}`)
+        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${args[0]}`)
         const videoData = response.data.data.data
-        
-        const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
+        const mediaUrl = videoData.hdplay
+
+        // Buat caption dengan informasi video
+        const caption = `✅ *${BOT_NAME} TikTok Downloader*\n\n` +
             `*Title:* ${videoData.title}\n` +
             `*Author:* ${videoData.author.nickname}\n` +
             `*Duration:* ${videoData.duration}s\n` +
@@ -398,18 +399,31 @@ const handleTikTokDownload = async (sock, msg, args) => {
             `*Likes:* ${videoData.digg_count}` +
             WATERMARK
 
-        await sock.sendMessage(msg.from, {
-            video: { url: videoData.hdplay },
-            caption: caption,
-            mimetype: 'video/mp4'
-        })
+        // Cek apakah ini video atau foto dari URL
+        const isVideo = mediaUrl.toLowerCase().includes('.mp4')
 
+        if (isVideo) {
+            // Kirim sebagai video
+            await sock.sendMessage(msg.from, {
+                video: { url: mediaUrl },
+                caption: caption,
+                mimetype: 'video/mp4'
+            })
+        } else {
+            // Kirim sebagai gambar jika bukan video
+            await sock.sendMessage(msg.from, {
+                image: { url: mediaUrl },
+                caption: caption
+            })
+        }
+
+        // Hapus pesan processing
         await sock.sendMessage(msg.from, { delete: processingMsg.key })
     } catch (error) {
-        logger.error('TikTok download error:', error)
+        console.error('TikTok download error:', error)
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
-            text: '_*❌ Failed to download TikTok video*_' + WATERMARK
+            text: '*❌ Failed to download TikTok media*' + WATERMARK
         })
     }
 }
@@ -423,22 +437,34 @@ const handleInstagramDownload = async (sock, msg, args) => {
     }
 
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Processing Instagram download..._' + WATERMARK
+        text: '👀 _Processing Instagram download..._' + WATERMARK
     })
 
     try {
         const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/igdl?url=${args[0]}`)
         const mediaUrl = response.data.data[0].url
 
-        await sock.sendMessage(msg.from, {
-            video: { url: mediaUrl },
-            caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
-            mimetype: 'video/mp4'
-        })
+        // Cek tipe media dari URL (foto atau video)
+        const isVideo = mediaUrl.toLowerCase().includes('.mp4')
 
+        if (isVideo) {
+            await sock.sendMessage(msg.from, {
+                video: { url: mediaUrl },
+                caption: `✅ *${BOT_NAME} Instagram Downloader*` + WATERMARK,
+                mimetype: 'video/mp4'
+            })
+        } else {
+            // Jika bukan video, kirim sebagai gambar
+            await sock.sendMessage(msg.from, {
+                image: { url: mediaUrl },
+                caption: `✅ *${BOT_NAME} Instagram Downloader*` + WATERMARK
+            })
+        }
+
+        // Hapus pesan "processing"
         await sock.sendMessage(msg.from, { delete: processingMsg.key })
     } catch (error) {
-        logger.error('Instagram download error:', error)
+        console.error('Instagram download error:', error)
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
             text: '*❌ Failed to download Instagram media*' + WATERMARK
