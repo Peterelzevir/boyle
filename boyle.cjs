@@ -311,7 +311,7 @@ const handleStickerCreation = async (sock, msg) => {
 
         await sock.sendImageAsSticker(msg.from, tempFile, {
             pack: BOT_NAME,
-            author: 'boyle goblok',
+            author: 'boyle tukang ac',
             categories: ['🤖'],
             quality: 50
         })
