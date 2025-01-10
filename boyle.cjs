@@ -373,75 +373,28 @@ const handleToImageCommand = async (sock, msg) => {
     }
 }
 
-const handleTikTokDownload = async (sock, msg, args) => {
-    // Cek apakah args adalah array dan memiliki setidaknya satu elemen
+const handleInstagramDownload = async (sock, msg, args) => {
+    console.log('Args received (Instagram):', args); // Debug args
+
     if (!Array.isArray(args) || args.length === 0 || !args[0]) {
         await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
+            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
         });
         return;
     }
 
-    const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Processing TikTok download..._' + WATERMARK
-    });
-
-    try {
-        // Panggil API untuk mengunduh video TikTok
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${args[0]}`);
-        console.log('API Response:', response.data); // Log respons API untuk debugging
-
-        // Pastikan data yang diharapkan ada dalam respons
-        if (!response.data || !response.data.data || !response.data.data.data) {
-            throw new Error('Invalid API response structure');
+    const isValidUrl = (url) => {
+        try {
+            new URL(url);
+            return true;
+        } catch (e) {
+            return false;
         }
+    };
 
-        const videoData = response.data.data.data;
-        const mediaUrl = videoData.hdplay;
-
-        // Buat caption dengan informasi video
-        const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
-            `*Title:* ${videoData.title}\n` +
-            `*Author:* ${videoData.author.nickname}\n` +
-            `*Duration:* ${videoData.duration}s\n` +
-            `*Views:* ${videoData.play_count}\n` +
-            `*Likes:* ${videoData.digg_count}` +
-            WATERMARK;
-
-        // Cek apakah ini video atau foto dari URL
-        const isVideo = mediaUrl.toLowerCase().includes('.mp4');
-
-        if (isVideo) {
-            // Kirim sebagai video
-            await sock.sendMessage(msg.from, {
-                video: { url: mediaUrl },
-                caption: caption,
-                mimetype: 'video/mp4'
-            });
-        } else {
-            // Kirim sebagai gambar jika bukan video
-            await sock.sendMessage(msg.from, {
-                image: { url: mediaUrl },
-                caption: caption
-            });
-        }
-
-        // Hapus pesan processing
-        await sock.sendMessage(msg.from, { delete: processingMsg.key });
-    } catch (error) {
-        console.error('TikTok download error:', error);
+    if (!isValidUrl(args[0])) {
         await sock.sendMessage(msg.from, {
-            edit: processingMsg.key,
-            text: '*❌ Failed to download TikTok media*' + WATERMARK
-        });
-    }
-};
-
-const handleInstagramDownload = async (sock, msg, args) => {
-    // Cek apakah args adalah array dan memiliki setidaknya satu elemen
-    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
-        await sock.sendMessage(msg.from, {
-            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
+            text: '*_⚠️ Please provide a valid Instagram URL_*' + WATERMARK
         });
         return;
     }
@@ -451,18 +404,14 @@ const handleInstagramDownload = async (sock, msg, args) => {
     });
 
     try {
-        // Panggil API untuk mengunduh media Instagram
         const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/igdl?url=${args[0]}`);
-        console.log('API Response:', response.data); // Log respons API untuk debugging
+        console.log('API Response (Instagram):', response.data);
 
-        // Pastikan data yang diharapkan ada dalam respons
         if (!response.data || !response.data.data || response.data.data.length === 0) {
             throw new Error('Invalid API response structure');
         }
 
         const mediaUrl = response.data.data[0].url;
-
-        // Cek tipe media dari URL (foto atau video)
         const isVideo = mediaUrl.toLowerCase().includes('.mp4');
 
         if (isVideo) {
@@ -472,20 +421,90 @@ const handleInstagramDownload = async (sock, msg, args) => {
                 mimetype: 'video/mp4'
             });
         } else {
-            // Jika bukan video, kirim sebagai gambar
             await sock.sendMessage(msg.from, {
                 image: { url: mediaUrl },
                 caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK
             });
         }
 
-        // Hapus pesan "processing"
         await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
         console.error('Instagram download error:', error);
         await sock.sendMessage(msg.from, {
             edit: processingMsg.key,
             text: '*❌ Failed to download Instagram media*' + WATERMARK
+        });
+    }
+};
+
+const handleTikTokDownload = async (sock, msg, args) => {
+    console.log('Args received (TikTok):', args); // Debug args
+
+    if (!Array.isArray(args) || args.length === 0 || !args[0]) {
+        await sock.sendMessage(msg.from, {
+            text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
+        });
+        return;
+    }
+
+    const isValidUrl = (url) => {
+        try {
+            new URL(url);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    };
+
+    if (!isValidUrl(args[0])) {
+        await sock.sendMessage(msg.from, {
+            text: '*⚠️ Please provide a valid TikTok URL*' + WATERMARK
+        });
+        return;
+    }
+
+    const processingMsg = await sock.sendMessage(msg.from, {
+        text: '_Processing TikTok download..._' + WATERMARK
+    });
+
+    try {
+        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${args[0]}`);
+        console.log('API Response (TikTok):', response.data);
+
+        if (!response.data || !response.data.data || !response.data.data.data) {
+            throw new Error('Invalid API response structure');
+        }
+
+        const videoData = response.data.data.data;
+        const mediaUrl = videoData.hdplay;
+
+        const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
+            `*Title:* ${videoData.title}\n` +
+            `*Author:* ${videoData.author.nickname}\n` +
+            `*Duration:* ${videoData.duration}s\n` +
+            `*Views:* ${videoData.play_count}\n` +
+            `*Likes:* ${videoData.digg_count}` +
+            WATERMARK;
+
+        if (mediaUrl.toLowerCase().includes('.mp4')) {
+            await sock.sendMessage(msg.from, {
+                video: { url: mediaUrl },
+                caption: caption,
+                mimetype: 'video/mp4'
+            });
+        } else {
+            await sock.sendMessage(msg.from, {
+                image: { url: mediaUrl },
+                caption: caption
+            });
+        }
+
+        await sock.sendMessage(msg.from, { delete: processingMsg.key });
+    } catch (error) {
+        console.error('TikTok download error:', error);
+        await sock.sendMessage(msg.from, {
+            edit: processingMsg.key,
+            text: '*❌ Failed to download TikTok media*' + WATERMARK
         });
     }
 };
