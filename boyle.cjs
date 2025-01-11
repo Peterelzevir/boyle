@@ -18,6 +18,7 @@ const path = require('path')
 const fs = require('fs')
 const qrcode = require('qrcode')
 const readline = require('readline')
+const webp = require('node-webpmux');
 const axios = require('axios')
 const FileType = require('file-type')
 const { writeFile } = require('fs/promises')
@@ -33,6 +34,16 @@ const BOT_NAME = 'Pinemark'
 const STICKER_AUTHOR = 'boyle kocak anak tonggi'
 const WATERMARK = '\n\n_Powered by @hiyaok on Telegram_'
 const OWNER_NUMBER = '6281280174445'
+
+// Enhanced sticker constants 
+const STICKER_METADATA = {
+    pack: BOT_NAME,
+    author: STICKER_AUTHOR, 
+    categories: ['🤖'],
+    android: "https://play.google.com/store/apps/details?id=com.whatsapp",
+    ios: "https://apps.apple.com/app/whatsapp-messenger/id310633997",
+    packname: `${BOT_NAME} Pack`
+};
 
 // Enhanced Help Menu Template
 const helpMenu = `╭━━━━━━━━━━━━━━━━━━━━━╮
@@ -280,86 +291,78 @@ const createSticker = async (mediaData, type) => {
         await fs.promises.writeFile(tempFile, mediaData);
         
         if (type === 'image') {
-            // Convert image to webp
+            // Process image first
             await sharp(tempFile)
                 .resize(512, 512, {
                     fit: 'contain',
                     background: { r: 0, g: 0, b: 0, alpha: 0 }
                 })
-                .webp()
+                .webp({ quality: 100 })
                 .toFile(outputFile);
 
-            // Add metadata
-            const exif = {
-                'sticker-pack-id': `boyle.pack.${Date.now()}`,
-                'sticker-pack-name': BOT_NAME,
-                'sticker-pack-publisher': 'boyle anak tonggi',
-                'emojis': ['🤖'],
-                'android-app-store-link': 'https://play.google.com/store/apps/details?id=com.whatsapp',
-                'ios-app-store-link': 'https://apps.apple.com/app/whatsapp-messenger/id310633997',
+            // Add proper metadata
+            const img = new webp.Image();
+            await img.load(outputFile);
+            
+            const json = {
+                "sticker-pack-id": `${BOT_NAME}.${Date.now()}`,
+                "sticker-pack-name": STICKER_METADATA.pack,
+                "sticker-pack-publisher": STICKER_METADATA.author,
+                "android-app-store-link": STICKER_METADATA.android,
+                "ios-app-store-link": STICKER_METADATA.ios,
+                "emojis": STICKER_METADATA.categories
             };
 
-            const exifBuffer = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]);
-            const jsonBuffer = Buffer.from(JSON.stringify(exif));
-            const stickerBuffer = await fs.promises.readFile(outputFile);
-            const result = Buffer.concat([stickerBuffer, exifBuffer, jsonBuffer]);
-            
-            await fs.promises.writeFile(outputFile, result);
+            img.exif = Buffer.from(JSON.stringify(json));
+            await img.save(outputFile);
 
         } else if (type === 'video') {
-            // For video sticker
             await new Promise((resolve, reject) => {
                 ffmpeg(tempFile)
-                    .inputOptions([
-                        "-y",
-                        "-t", "10"
-                    ])
+                    .inputOptions(["-t", "10"])
                     .outputOptions([
                         "-vcodec", "libwebp",
-                        "-vf", "scale=512:512:force_original_aspect_ratio=decrease,fps=15,pad=512:512:-1:-1:color=white@0.0",
+                        "-vf", "scale=512:512:force_original_aspect_ratio=decrease,fps=15",
+                        "-lossless", "1",
                         "-loop", "0",
                         "-preset", "default",
                         "-an",
                         "-vsync", "0"
                     ])
-                    .toFormat('webp')
+                    .toFormat("webp")
                     .save(outputFile)
-                    .on('end', resolve)
-                    .on('error', reject);
+                    .on("end", resolve)
+                    .on("error", reject);
             });
-
-            // Add metadata for video sticker
-            const exif = {
-                'sticker-pack-id': `boyle.pack.${Date.now()}`,
-                'sticker-pack-name': BOT_NAME,
-                'sticker-pack-publisher': 'boyle anak tonggi',
-                'emojis': ['🤖']
+            
+            // Add metadata to video sticker
+            const img = new webp.Image();
+            await img.load(outputFile);
+            
+            const json = {
+                "sticker-pack-id": `${BOT_NAME}.${Date.now()}`,
+                "sticker-pack-name": STICKER_METADATA.pack,
+                "sticker-pack-publisher": STICKER_METADATA.author,
+                "android-app-store-link": STICKER_METADATA.android,
+                "ios-app-store-link": STICKER_METADATA.ios,
+                "emojis": STICKER_METADATA.categories
             };
 
-            const exifBuffer = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]);
-            const jsonBuffer = Buffer.from(JSON.stringify(exif));
-            const stickerBuffer = await fs.promises.readFile(outputFile);
-            const result = Buffer.concat([stickerBuffer, exifBuffer, jsonBuffer]);
-            
-            await fs.promises.writeFile(outputFile, result);
+            img.exif = Buffer.from(JSON.stringify(json));
+            await img.save(outputFile);
         }
 
         const finalBuffer = await fs.promises.readFile(outputFile);
-
-        // Cleanup files
+        
+        // Cleanup
         await Promise.all([
-            fs.promises.unlink(tempFile),
-            fs.promises.unlink(outputFile)
+            fs.promises.unlink(tempFile).catch(() => {}),
+            fs.promises.unlink(outputFile).catch(() => {})
         ]);
-
+        
         return finalBuffer;
     } catch (error) {
-        console.error('Error in createSticker:', error);
-        // Cleanup on error
-        try {
-            if (fs.existsSync(tempFile)) await fs.promises.unlink(tempFile);
-            if (fs.existsSync(outputFile)) await fs.promises.unlink(outputFile);
-        } catch {}
+        console.error('Sticker creation error:', error);
         throw error;
     }
 };
@@ -446,14 +449,25 @@ const handleToImageCommand = async (sock, msg) => {
     }
 };
 
-// Instagram Video Only Handler
-const handleInstagramDownload = async (sock, msg, url) => {
-    if (!url) {
+// Instagram Handler (Video Only)
+const handleInstagramDownload = async (sock, msg) => {
+    const senderId = msg.sender || msg.from;
+
+    // If no waiting response, ask for URL
+    if (!waitingResponse.has(senderId)) {
+        waitingResponse.set(senderId, 'instagram');
         await sock.sendMessage(msg.from, {
-            text: '*_⚠️ Please provide an Instagram URL_*' + WATERMARK
-        });
+            text: '*📥 INSTAGRAM DOWNLOADER*\n\nPlease send the Instagram video URL (Reels/Post)' + WATERMARK
+        }, { quoted: msg });
         return;
     }
+
+    // Get URL from user message
+    const url = msg.message?.conversation || 
+                msg.message?.extendedTextMessage?.text || '';
+    
+    // Clear waiting response
+    waitingResponse.delete(senderId);
 
     const processingMsg = await sock.sendMessage(msg.from, {
         text: '_Processing Instagram video..._' + WATERMARK
@@ -461,38 +475,72 @@ const handleInstagramDownload = async (sock, msg, url) => {
 
     try {
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`;
-        const response = await fetch(apiUrl);
-        const data = await response.json();
+        const { data: response } = await axios.get(apiUrl, {
+            timeout: 30000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
 
-        // Hanya ambil video saja
-        const videoUrl = data?.data?.[0]?.url;
-        if (!videoUrl || !videoUrl.includes('.mp4')) {
-            throw new Error('No video found in post');
+        if (!response.success || !response.data?.[0]?.url) {
+            throw new Error('Video not found');
         }
 
+        const mediaUrl = response.data[0].url;
+        // Only process if it's video
+        if (!mediaUrl.includes('.mp4')) {
+            throw new Error('Not a video');
+        }
+
+        const videoBuffer = await axios.get(mediaUrl, {
+            responseType: 'arraybuffer',
+            timeout: 60000 // Longer timeout for video download
+        }).then(res => Buffer.from(res.data));
+
         await sock.sendMessage(msg.from, {
-            video: { url: videoUrl },
+            video: videoBuffer,
             caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
             mimetype: 'video/mp4'
         }, { quoted: msg });
 
-        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
+        console.error('Instagram error:', error);
+        let errorMessage = '*❌ Failed to download Instagram video.*\n';
+        
+        if (error.message.includes('Not a video')) {
+            errorMessage = '*❌ Only video posts are supported.*';
+        } else if (error.message.includes('Video not found')) {
+            errorMessage = '*❌ Video not found or is private.*';
+        } else {
+            errorMessage += 'Please check your URL and try again.';
+        }
+
         await sock.sendMessage(msg.from, {
-            edit: processingMsg.key,
-            text: '*❌ Failed to download Instagram video. Make sure the URL is correct and contains a video.*' + WATERMARK
+            text: errorMessage + WATERMARK
         });
+    } finally {
+        await sock.sendMessage(msg.from, { 
+            delete: processingMsg.key 
+        }).catch(() => {});
     }
 };
 
-// TikTok Handler
-const handleTikTokDownload = async (sock, msg, url) => {
-    if (!url) {
+// TikTok Handler with improved flow
+const handleTikTokDownload = async (sock, msg) => {
+    const senderId = msg.sender || msg.from;
+
+    if (!waitingResponse.has(senderId)) {
+        waitingResponse.set(senderId, 'tiktok');
         await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a TikTok URL*' + WATERMARK
-        });
+            text: '*📥 TIKTOK DOWNLOADER*\n\nPlease send the TikTok video URL' + WATERMARK
+        }, { quoted: msg });
         return;
     }
+
+    const url = msg.message?.conversation || 
+                msg.message?.extendedTextMessage?.text || '';
+    
+    waitingResponse.delete(senderId);
 
     const processingMsg = await sock.sendMessage(msg.from, {
         text: '_Processing TikTok video..._' + WATERMARK
@@ -500,149 +548,237 @@ const handleTikTokDownload = async (sock, msg, url) => {
 
     try {
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`;
-        const response = await fetch(apiUrl);
-        const data = await response.json();
-        
-        const videoData = data?.data?.data?.data;
-        if (!videoData) throw new Error('Invalid response');
-        
-        const videoUrl = videoData.hdplay || videoData.play || videoData.wmplay;
-        if (!videoUrl) throw new Error('No video URL found');
+        const { data: response } = await axios.get(apiUrl, {
+            timeout: 30000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+
+        if (!response.success || !response.data?.data?.data?.hdplay) {
+            throw new Error('Video not found');
+        }
+
+        const videoData = response.data.data.data;
+        const videoBuffer = await axios.get(videoData.hdplay, {
+            responseType: 'arraybuffer',
+            timeout: 60000
+        }).then(res => Buffer.from(res.data));
 
         const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
             `*Title:* ${videoData.title || 'N/A'}\n` +
-            `*Author:* ${videoData.author?.nickname || 'N/A'}\n` +
-            `*Duration:* ${videoData.duration || 'N/A'}s` +
+            `*Author:* ${videoData.author?.nickname || 'N/A'}` +
             WATERMARK;
 
         await sock.sendMessage(msg.from, {
-            video: { url: videoUrl },
+            video: videoBuffer,
             caption: caption,
             mimetype: 'video/mp4'
         }, { quoted: msg });
 
-        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
+        console.error('TikTok error:', error);
+        let errorMessage = '*❌ Failed to download TikTok video.*\n';
+        errorMessage += error.message.includes('Video not found') ? 
+            'Video not available or private.' : 
+            'Please check your URL and try again.';
+        
         await sock.sendMessage(msg.from, {
-            edit: processingMsg.key,
-            text: '*❌ Failed to download TikTok video. Please make sure the URL is correct.*' + WATERMARK
+            text: errorMessage + WATERMARK
         });
+    } finally {
+        await sock.sendMessage(msg.from, { 
+            delete: processingMsg.key 
+        }).catch(() => {});
     }
 };
 
-// Spotify Handler
-const handleSpotifyDownload = async (sock, msg, url) => {
-    if (!url) {
+// Spotify Handler with improved flow
+const handleSpotifyDownload = async (sock, msg) => {
+    const senderId = msg.sender || msg.from;
+
+    if (!waitingResponse.has(senderId)) {
+        waitingResponse.set(senderId, 'spotify');
         await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a Spotify URL*' + WATERMARK
-        });
+            text: '*📥 SPOTIFY DOWNLOADER*\n\nPlease send the Spotify track URL' + WATERMARK
+        }, { quoted: msg });
         return;
     }
 
+    const url = msg.message?.conversation || 
+                msg.message?.extendedTextMessage?.text || '';
+    
+    waitingResponse.delete(senderId);
+
     const processingMsg = await sock.sendMessage(msg.from, {
-        text: '_Processing Spotify download..._' + WATERMARK
+        text: '_Processing Spotify track..._' + WATERMARK
     });
 
     try {
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(url)}`;
-        const response = await fetch(apiUrl);
-        const data = await response.json();
+        const { data: response } = await axios.get(apiUrl, {
+            timeout: 30000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
 
-        if (!data.success || !data.link || !data.metadata) {
-            throw new Error('Failed to get audio');
+        if (!response.success || !response.link) {
+            throw new Error('Track not found');
         }
 
+        const audioBuffer = await axios.get(response.link, {
+            responseType: 'arraybuffer',
+            timeout: 60000
+        }).then(res => Buffer.from(res.data));
+
         const caption = `*${BOT_NAME} Spotify Downloader*\n\n` +
-            `*Title:* ${data.metadata.title}\n` +
-            `*Artist:* ${data.metadata.artists}\n` +
-            `*Album:* ${data.metadata.album}\n` +
-            `*Release:* ${data.metadata.releaseDate}` +
+            `*Title:* ${response.metadata?.title || 'N/A'}\n` +
+            `*Artist:* ${response.metadata?.artists || 'N/A'}\n` +
+            `*Album:* ${response.metadata?.album || 'N/A'}\n` +
+            `*Release:* ${response.metadata?.releaseDate || 'N/A'}` +
             WATERMARK;
 
         await sock.sendMessage(msg.from, {
-            audio: { url: data.link },
+            audio: audioBuffer,
             mimetype: 'audio/mp3',
-            fileName: `${data.metadata.title}.mp3`
+            fileName: `${response.metadata?.title || 'spotify-track'}.mp3`,
+            caption: caption
         }, { quoted: msg });
 
-        await sock.sendMessage(msg.from, { delete: processingMsg.key });
     } catch (error) {
+        console.error('Spotify error:', error);
+        let errorMessage = '*❌ Failed to download Spotify track.*\n';
+        errorMessage += error.message.includes('Track not found') ? 
+            'Track not found or is not available.' : 
+            'Please check your URL and try again.';
+
         await sock.sendMessage(msg.from, {
-            edit: processingMsg.key,
-            text: '*❌ Failed to download Spotify track. Please make sure the URL is correct.*' + WATERMARK
+            text: errorMessage + WATERMARK
         });
+    } finally {
+        await sock.sendMessage(msg.from, { 
+            delete: processingMsg.key 
+        }).catch(() => {});
     }
 };
 
-// Screenshot Web Handler
-const handleSSWeb = async (sock, msg, url) => {
-    if (!url) {
+// SS Web Handler
+const handleSSWeb = async (sock, msg) => {
+    const senderId = msg.sender || msg.from;
+
+    // If no waiting response, ask for URL
+    if (!waitingResponse.has(senderId)) {
+        waitingResponse.set(senderId, {
+            type: 'ssweb',
+            step: 'url'
+        });
+        
         await sock.sendMessage(msg.from, {
-            text: '*⚠️ Please provide a URL to screenshot*' + WATERMARK
+            text: `*🌐 SCREENSHOT WEB*\n\nSilahkan kirim URL website yang ingin discreenshot` + WATERMARK
+        }, { quoted: msg });
+        return;
+    }
+
+    const waiting = waitingResponse.get(senderId);
+    
+    // Get URL from user's message
+    if (waiting.step === 'url') {
+        const url = msg.message?.conversation || 
+                   msg.message?.extendedTextMessage?.text || '';
+
+        // Validate URL
+        try {
+            new URL(url);
+        } catch {
+            waitingResponse.delete(senderId);
+            await sock.sendMessage(msg.from, {
+                text: '*❌ URL tidak valid! Silahkan coba lagi dengan URL yang benar.*\nContoh: https://google.com' + WATERMARK
+            });
+            return;
+        }
+
+        // Ask for mode
+        waitingResponse.set(senderId, {
+            type: 'ssweb',
+            step: 'mode',
+            url: url
+        });
+
+        await sock.sendMessage(msg.from, {
+            text: `*🌐 PILIH MODE SCREENSHOT*\n\nKetik angka sesuai pilihan:\n\n1. Desktop Mode\n2. Phone Mode\n3. Full Page` + WATERMARK
         });
         return;
     }
 
-    try {
-        const pollMessage = await sock.sendMessage(msg.from, {
-            poll: {
-                name: '*Choose Screenshot Mode:*',
-                values: ['Full Page', 'Desktop View', 'Mobile View'],
-                selectableCount: 1
-            }
+    // Get mode from user's choice
+    if (waiting.step === 'mode') {
+        const choice = msg.message?.conversation || 
+                      msg.message?.extendedTextMessage?.text || '';
+
+        let mode;
+        switch (choice) {
+            case '1':
+                mode = 'desktop';
+                break;
+            case '2':
+                mode = 'phone';
+                break;
+            case '3':
+                mode = 'full';
+                break;
+            default:
+                waitingResponse.delete(senderId);
+                await sock.sendMessage(msg.from, {
+                    text: '*❌ Pilihan tidak valid! Silahkan coba lagi.*' + WATERMARK
+                });
+                return;
+        }
+
+        // Clear waiting response
+        waitingResponse.delete(senderId);
+
+        const processingMsg = await sock.sendMessage(msg.from, {
+            text: '_Mengambil screenshot..._' + WATERMARK
         });
 
-        // Polling handler
-        const pollHandler = async (updates) => {
-            for (const update of updates) {
-                if (update.key.id === pollMessage.key.id && update.pollUpdates) {
-                    const selectedOption = update.pollUpdates[0]?.options[0]?.name;
-                    if (selectedOption) {
-                        // Remove listener
-                        sock.ev.removeListener('messages.update', pollHandler);
-
-                        // Delete poll message
-                        await sock.sendMessage(msg.from, { delete: pollMessage.key });
-
-                        const processingMsg = await sock.sendMessage(msg.from, {
-                            text: '_Taking screenshot..._' + WATERMARK
-                        });
-
-                        try {
-                            let mode;
-                            switch (selectedOption) {
-                                case 'Full Page': mode = 'full'; break;
-                                case 'Desktop View': mode = 'desktop'; break;
-                                case 'Mobile View': mode = 'phone'; break;
-                                default: mode = 'full';
-                            }
-
-                            const ssUrl = `https://api.ryzendesu.vip/api/tool/ssweb?url=${encodeURIComponent(url)}&mode=${mode}`;
-
-                            await sock.sendMessage(msg.from, {
-                                image: { url: ssUrl },
-                                caption: `*Screenshot Web*\nMode: ${selectedOption}` + WATERMARK
-                            }, { quoted: msg });
-
-                            await sock.sendMessage(msg.from, { delete: processingMsg.key });
-                        } catch (error) {
-                            await sock.sendMessage(msg.from, {
-                                edit: processingMsg.key,
-                                text: '*❌ Failed to take screenshot. Please try again.*' + WATERMARK
-                            });
-                        }
-                    }
+        try {
+            const apiUrl = `https://api.ryzendesu.vip/api/tool/ssweb?url=${encodeURIComponent(waiting.url)}&mode=${mode}`;
+            
+            const response = await axios.get(apiUrl, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
-            }
-        };
+            });
 
-        // Add polling listener
-        sock.ev.on('messages.update', pollHandler);
+            const buffer = Buffer.from(response.data);
 
-    } catch (error) {
-        await sock.sendMessage(msg.from, {
-            text: '*❌ Failed to process screenshot request*' + WATERMARK
-        });
+            const modeNames = {
+                'desktop': 'Desktop Mode',
+                'phone': 'Phone Mode',
+                'full': 'Full Page'
+            };
+
+            await sock.sendMessage(msg.from, {
+                image: buffer,
+                caption: `*🌐 Screenshot Web*\n\n*URL:* ${waiting.url}\n*Mode:* ${modeNames[mode]}` + WATERMARK
+            }, { quoted: msg });
+
+            await sock.sendMessage(msg.from, { 
+                delete: processingMsg.key 
+            }).catch(() => {});
+
+        } catch (error) {
+            console.error('Screenshot error:', error);
+            await sock.sendMessage(msg.from, {
+                text: '*❌ Gagal mengambil screenshot. Website mungkin tidak dapat diakses.*' + WATERMARK
+            });
+            await sock.sendMessage(msg.from, { 
+                delete: processingMsg.key 
+            }).catch(() => {});
+        }
     }
 };
 
@@ -700,6 +836,9 @@ const handleGroupCommand = async (sock, msg, command, args) => {
     }
 }
 
+// Track waiting responses
+const waitingResponse = new Map();
+
 // Main Message Handler
 const handleIncomingMessage = async (sock, msg) => {
     const serialized = {
@@ -713,73 +852,89 @@ const handleIncomingMessage = async (sock, msg) => {
         isGroup: isJidGroup(msg.key.remoteJid)
     }
 
+    // Check if waiting for a response
+    if (waitingResponse.has(serialized.sender)) {
+        const waiting = waitingResponse.get(serialized.sender);
+        
+        switch (waiting.type) {
+            case 'instagram':
+                await handleInstagramDownload(sock, serialized);
+                break;
+            case 'tiktok':
+                await handleTikTokDownload(sock, serialized);
+                break;
+            case 'spotify':
+                await handleSpotifyDownload(sock, serialized);
+                break;
+            case 'ssweb':
+                await handleSSWeb(sock, serialized);
+                break;
+        }
+        return;
+    }
+
     const body = msg.message?.conversation || 
                 msg.message?.imageMessage?.caption ||
                 msg.message?.videoMessage?.caption || 
-                msg.message?.extendedTextMessage?.text || ''
+                msg.message?.extendedTextMessage?.text || '';
 
-    if (!body.startsWith('.')) return
+    if (!body.startsWith('.')) return;
 
-    const [command, ...args] = body.slice(1).toLowerCase().split(' ')
-    const fullArgs = args.join(' ')
+    const [command, ...args] = body.slice(1).toLowerCase().split(' ');
+    const fullArgs = args.join(' ');
 
     try {
         switch (command) {
             case 'menu':
             case 'help':
-                await replyMessage(sock, serialized, helpMenu)
-                break
+                await replyMessage(sock, serialized, helpMenu);
+                break;
 
             case 's':
             case 'sticker':
-                await handleStickerCommand(sock, serialized)
-                break
+                await handleStickerCommand(sock, serialized);
+                break;
 
             case 'toimg':
-                await handleToImageCommand(sock, serialized)
-                break
+                await handleToImageCommand(sock, serialized);
+                break;
 
             case 'tiktok':
             case 'tt':
             case 't':
-                await handleTikTokDownload(sock, serialized, args[0])
-                break
+                await handleTikTokDownload(sock, serialized);
+                break;
                 
             case 'spotify':
             case 'spo':
-                await handleSpotifyDownload(sock, serialized, args[0])
-                break
+                await handleSpotifyDownload(sock, serialized);
+                break;
                 
             case 'ss':
             case 'ssweb':
-                await handleSSWeb(sock, serialized, args[0])
-                break
+                await handleSSWeb(sock, serialized);
+                break;
 
             case 'ig':
             case 'insta':
             case 'g':
-                await handleInstagramDownload(sock, serialized, args[0])
-                break
+                await handleInstagramDownload(sock, serialized);
+                break;
                 
-            case 'pin':
-            case 'pinterest':
-                await handlePinterestSearch(sock, serialized, args[0])
-                break
-
             case 'add':
             case 'kick':
             case 'promote':
             case 'demote':
-                await handleGroupCommand(sock, serialized, command, args)
-                break
+                await handleGroupCommand(sock, serialized, command, args);
+                break;
 
             case 'ping':
             case 'cek':
-                const start = Date.now()
-                await replyMessage(sock, serialized, '🏓 Testing ping...')
-                const end = Date.now()
-                await replyMessage(sock, serialized, `🏓 *Pong!*\n💫 Speed: ${end - start}ms`)
-                break
+                const start = Date.now();
+                await replyMessage(sock, serialized, '🏓 Testing ping...');
+                const end = Date.now();
+                await replyMessage(sock, serialized, `🏓 *Pong!*\n💫 Speed: ${end - start}ms`);
+                break;
 
             case 'owner':
             case 'own':
@@ -787,7 +942,7 @@ const handleIncomingMessage = async (sock, msg) => {
                             'VERSION:3.0\n' +
                             `FN:${BOT_NAME} Owner\n` +
                             `TEL;type=CELL;type=VOICE;waid=${OWNER_NUMBER}:+${OWNER_NUMBER}\n` +
-                            'END:VCARD'
+                            'END:VCARD';
 
                 await sock.sendMessage(serialized.from, { 
                     contacts: { 
@@ -799,24 +954,29 @@ const handleIncomingMessage = async (sock, msg) => {
                         participant: serialized.sender,
                         quotedMessage: serialized.message
                     }
-                }, { quoted: serialized })
-                break
+                }, { quoted: serialized });
+                break;
 
             case 'clone':
             case 'c':
                 if (serialized.sender === OWNER_NUMBER + '@s.whatsapp.net') {
-                    await cloneBot(sock, serialized)
+                    await cloneBot(sock, serialized);
                 } else {
-                    await replyMessage(sock, serialized, '❌ Only owner can use this command!')
+                    await replyMessage(sock, serialized, '❌ Only owner can use this command!' + WATERMARK);
                 }
-                break
+                break;
 
             default:
-                await replyMessage(sock, serialized, '❌ Unknown command! Use .menu to see available commands.')
+                await replyMessage(sock, serialized, '❌ Unknown command! Use .menu to see available commands.' + WATERMARK);
         }
     } catch (error) {
-        console.error('Error handling command:', error)
-        await replyMessage(sock, serialized, '❌ An error occurred while processing your command')
+        console.error('Error handling command:', error);
+        await replyMessage(sock, serialized, '❌ An error occurred while processing your command' + WATERMARK);
+
+        // Clear waiting response if error occurs
+        if (waitingResponse.has(serialized.sender)) {
+            waitingResponse.delete(serialized.sender);
+        }
     }
 }
 
