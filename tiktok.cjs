@@ -11,7 +11,7 @@ const config = {
 // Inisialisasi bot
 const bot = new TelegramBot(config.BOT_TOKEN, { polling: true });
 
-// Simpan ID user sementara di memory (reset saat bot restart)
+// Simpan ID user sementara di memory
 let activeUsers = new Set();
 
 // Check admin
@@ -37,52 +37,41 @@ async function checkMembership(userId) {
 
 // Promotional messages array
 const promoMessages = [
-    `*🚀 Tingkatkan Bisnis Anda dengan Bot Telegram!*\n\n` +
-    `\`Spesialis pembuatan bot Telegram profesional:\n` +
-    `✓ Bot Customer Service\n` +
-    `✓ Bot Downloader\n` +
+    `*🚀 Jasa Pembuatan Bot Telegram*\n\n` +
+    `\`Spesialis bot Telegram profesional:\n` +
+    `✓ Bot Downloader (TikTok, IG, FB)\n` +
+    `✓ Bot Support & Ticket\n` +
     `✓ Bot Payment Gateway\n` +
-    `✓ Bot Management\n` +
-    `✓ Dan berbagai bot custom sesuai kebutuhan\n\n` +
-    `💡 Konsultasi GRATIS\n` +
-    `👨‍💻 Developer berpengalaman\n` +
-    `⚡️ Pengerjaan cepat\n\n` +
-    `Hubungi @hiyaok sekarang!\``,
+    `✓ Bot Manajemen Group/Channel\n` +
+    `✓ Bot Custom sesuai kebutuhan\n\n` +
+    `💡 Free konsultasi\n` +
+    `⚡️ Proses cepat\n` +
+    `🔧 Free maintenance\n\n` +
+    `Order sekarang! Hubungi @hiyaok\``,
 
-    `*🤖 Butuh Bot Telegram Handal?*\n\n` +
-    `\`Layanan pembuatan bot Telegram:\n` +
-    `✓ Harga bersaing\n` +
-    `✓ Fitur premium\n` +
+    `*💼 Professional Telegram Bot Service*\n\n` +
+    `\`Layanan jasa pembuatan bot:\n` +
+    `✓ Source code diberikan\n` +
+    `✓ Berpengalaman\n` +
     `✓ Support 24/7\n` +
-    `✓ Free maintenance\n` +
-    `✓ Source code diberikan\n\n` +
-    `Buat botmu sekarang! Chat @hiyaok\``,
+    `✓ Harga bersahabat\n` +
+    `✓ Revisi sampai puas\n\n` +
+    `Limited slot! Chat @hiyaok\``,
 
-    `*💼 Special Offer Bot Telegram!*\n\n` +
-    `\`Dapatkan bot Telegram berkualitas untuk:\n` +
-    `✓ Otomatisasi bisnis\n` +
-    `✓ Peningkatan penjualan\n` +
-    `✓ Manajemen group/channel\n` +
-    `✓ Sistem ticket & support\n` +
-    `✓ Integrasi payment gateway\n\n` +
-    `Limited Offer! Hubungi @hiyaok\``
+    `*🌟 Upgrade Bisnis Anda dengan Bot*\n\n` +
+    `\`Bot Telegram untuk:\n` +
+    `✓ Auto responder\n` +
+    `✓ Digital product seller\n` +
+    `✓ Admin Group/Channel\n` +
+    `✓ Customer service\n` +
+    `✓ Payment automation\n\n` +
+    `Info lebih lanjut: @hiyaok\``
 ];
 
 // Schedule promotional messages
-// Pagi (08:00)
-cron.schedule('0 8 * * *', () => {
-    broadcastPromo(0);
-});
-
-// Siang (13:00)
-cron.schedule('0 13 * * *', () => {
-    broadcastPromo(1);
-});
-
-// Malam (20:00)
-cron.schedule('0 20 * * *', () => {
-    broadcastPromo(2);
-});
+cron.schedule('0 8 * * *', () => broadcastPromo(0));  // 08:00
+cron.schedule('0 13 * * *', () => broadcastPromo(1)); // 13:00
+cron.schedule('0 20 * * *', () => broadcastPromo(2)); // 20:00
 
 // Broadcast promotional message
 async function broadcastPromo(messageIndex) {
@@ -93,7 +82,6 @@ async function broadcastPromo(messageIndex) {
             await new Promise(r => setTimeout(r, 100)); // Delay to avoid flood
         } catch (error) {
             console.error(`Failed to send promo to ${userId}:`, error.message);
-            // Remove user if bot was blocked or chat not found
             if (error.response && error.response.statusCode === 403) {
                 activeUsers.delete(userId);
             }
@@ -101,10 +89,20 @@ async function broadcastPromo(messageIndex) {
     }
 }
 
+// Fungsi untuk validasi URL TikTok
+function isTikTokUrl(url) {
+    const tiktokPatterns = [
+        /https?:\/\/(?:www\.)?tiktok\.com\/@[\w.-]+\/video\/\d+/,
+        /https?:\/\/(?:www\.)?tiktok\.com\/t\/[\w-]+/,
+        /https?:\/\/(?:www\.)?vm\.tiktok\.com\/[\w-]+/
+    ];
+    return tiktokPatterns.some(pattern => pattern.test(url));
+}
+
 // Command /start
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    activeUsers.add(chatId); // Add user to active users
+    activeUsers.add(chatId);
 
     const keyboard = {
         inline_keyboard: [
@@ -136,8 +134,8 @@ bot.on('text', async (msg) => {
     const chatId = msg.chat.id;
     const url = msg.text;
 
-    if (!url.match(/https?:\/\/(?:www\.)?tiktok\.com/)) return;
-    activeUsers.add(chatId); // Add user to active users when they use the bot
+    if (!isTikTokUrl(url)) return;
+    activeUsers.add(chatId);
 
     // Check membership kecuali admin
     if (!isAdmin(msg.from.id)) {
@@ -186,11 +184,11 @@ bot.on('text', async (msg) => {
             }
         );
 
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${url}`);
-        const data = response.data;
-
-        if (data.success && data.data) {
-            const videoData = data.data.data;
+        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`);
+        
+        if (response.data.success) {
+            const videoData = response.data.data.data;
+            const hdplayUrl = videoData.hdplay;
             
             // Update: Downloading
             await bot.editMessageText(
@@ -221,24 +219,25 @@ bot.on('text', async (msg) => {
                 `└ ❤️ Likes: \`${videoData.digg_count.toLocaleString()}\`\n` +
                 `└ 💭 Comments: \`${videoData.comment_count.toLocaleString()}\`\n` +
                 `└ 🔄 Shares: \`${videoData.share_count.toLocaleString()}\`\n\n` +
-                `*🤖 @YourBotUsername*`;
+                `*🤖 @downloadertiktokrobot*`;
 
-            // Delete process message and send video
+            // Delete process message
             await bot.deleteMessage(chatId, processMsg.message_id);
-            await bot.sendVideo(chatId, videoData.hdplay, {
+
+            // Kirim video
+            await bot.sendVideo(chatId, hdplayUrl, {
                 caption: caption,
                 parse_mode: 'Markdown'
             });
         } else {
-            throw new Error('Failed to process video');
+            throw new Error('Failed to get video data');
         }
     } catch (error) {
-        console.error('Download error:', error);
+        console.error('Error:', error);
         bot.editMessageText(
             '*❌ Download Failed*\n\n' +
             '_Sorry, there was an error processing your request._\n' +
-            'Please try again later! 🔄\n\n' +
-            '*Error:* Invalid video or URL',
+            'Please try again later! 🔄',
             {
                 chat_id: chatId,
                 message_id: processMsg.message_id,
@@ -272,6 +271,12 @@ bot.on('callback_query', async (query) => {
 // Error handling
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
+});
+
+// Handle shutdown
+process.on('SIGINT', () => {
+    bot.stopPolling();
+    process.exit(0);
 });
 
 console.log('Bot is running...');
