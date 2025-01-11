@@ -21,29 +21,32 @@ const client = new MongoClient(config.MONGODB_URI, {
     }
 });
 
-// MongoDB Connection
-async function connectMongo() {
+let database;
+
+// Connect to MongoDB
+async function connectToMongo() {
     try {
         await client.connect();
-        await client.db("admin").command({ ping: 1 });
+        database = client.db("tiktokbot");
         console.log("Connected to MongoDB!");
-        return client.db("tiktokbot"); // return database instance
     } catch (error) {
         console.error("MongoDB connection error:", error);
         process.exit(1);
     }
 }
 
-// Initialize database connection
-let db;
-connectMongo().then((database) => {
-    db = database;
-}).catch(console.error);
+// Panggil fungsi koneksi
+connectToMongo();
 
 // Save user function
 async function saveUser(msg) {
     try {
-        const users = db.collection('users');
+        if (!database) {
+            console.log("Database connection not ready");
+            return;
+        }
+        
+        const users = database.collection('users');
         const userExists = await users.findOne({ userId: msg.from.id });
         
         if (!userExists) {
@@ -87,19 +90,21 @@ bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     await saveUser(msg);
 
-    const buttons = bot.inlineButton([
-        [
-            bot.button('🔔 Join Channel', 't.me/dagetfreenewnew'),
-            bot.button('📋 Join ListProject', 't.me/listprojec')
-        ],
-        [
-            bot.button('✅ Check Membership', 'check_membership')
-        ],
-        [
-            bot.button('📝 How to Use', 'tutorial'),
-            bot.button('📞 Support', 'support')
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '🔔 Join Channel', url: 't.me/dagetfreenewnew' },
+                { text: '📋 Join ListProject', url: 't.me/listprojec' }
+            ],
+            [
+                { text: '✅ Check Membership', callback_data: 'check_membership' }
+            ],
+            [
+                { text: '📝 How to Use', callback_data: 'tutorial' },
+                { text: '📞 Support', callback_data: 'support' }
+            ]
         ]
-    ]);
+    };
 
     const welcomeText = 
         '*Welcome to TikTok Downloader Bot* 🎥\n\n' +
@@ -110,7 +115,7 @@ bot.onText(/\/start/, async (msg) => {
 
     bot.sendMessage(chatId, welcomeText, {
         parse_mode: 'Markdown',
-        reply_markup: inlineButtons
+        reply_markup: keyboard
     });
 });
 
@@ -119,7 +124,7 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
     if (!isAdmin(msg.from.id)) return;
     const text = match[1];
     
-    const users = await db.collection('users').find().toArray();
+    const users = await database.collection('users').find().toArray();
     let success = 0;
     let failed = 0;
 
@@ -134,7 +139,6 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
             failed++;
         }
 
-        // Update progress every 10%
         if (i % Math.ceil(users.length / 10) === 0) {
             const progress = Math.round((i / users.length) * 100);
             await bot.editMessageText(
@@ -165,11 +169,11 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
 bot.onText(/\/stats/, async (msg) => {
     if (!isAdmin(msg.from.id)) return;
     
-    const totalUsers = await db.collection('users').countDocuments();
+    const totalUsers = await database.collection('users').countDocuments();
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     
-    const todayUsers = await db.collection('users').countDocuments({
+    const todayUsers = await database.collection('users').countDocuments({
         joinDate: { 
             $gte: todayStart,
             $lt: new Date()
@@ -195,15 +199,17 @@ bot.on('text', async (msg) => {
     if (!isAdmin(msg.from.id)) {
         const isMember = await checkMembership(msg.from.id);
         if (!isMember) {
-            const notMemberButtons = bot.inlineButton([
-                [
-                    bot.button('🔔 Join Channel', 't.me/dagetfreenewnew'),
-                    bot.button('📋 Join ListProject', 't.me/listprojec')
-                ],
-                [
-                    bot.button('✅ Check Membership', 'check_membership')
+            const keyboard = {
+                inline_keyboard: [
+                    [
+                        { text: '🔔 Join Channel', url: 't.me/dagetfreenewnew' },
+                        { text: '📋 Join ListProject', url: 't.me/listprojec' }
+                    ],
+                    [
+                        { text: '✅ Check Membership', callback_data: 'check_membership' }
+                    ]
                 ]
-            ]);
+            };
 
             return bot.sendMessage(chatId,
                 '*⚠️ Access Restricted*\n\n' +
@@ -213,7 +219,7 @@ bot.on('text', async (msg) => {
                 '_Join and verify your membership!_ 🔄',
                 {
                     parse_mode: 'Markdown',
-                    reply_markup: notMemberButtons
+                    reply_markup: keyboard
                 }
             );
         }
@@ -335,13 +341,18 @@ bot.on('callback_query', async (query) => {
         case 'support':
             await bot.sendMessage(chatId,
                 '*Need Help?* 🆘\n\n' +
-                'Contact admin: @hiyaok\n' +
+                'Contact admin: @AdminUsername\n' +
                 'Channel: @dagetfreenewnew\n\n' +
                 '_We will respond as soon as possible!_',
                 { parse_mode: 'Markdown' }
             );
             break;
     }
+});
+
+// Error handling
+bot.on('polling_error', (error) => {
+    console.error('Polling error:', error);
 });
 
 // Graceful shutdown
