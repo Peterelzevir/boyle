@@ -4,7 +4,7 @@ const cron = require('node-cron');
 
 // Bot Configuration
 const config = {
-    BOT_TOKEN: '7431538722:AAH1u5OXXSkXQS0aaS1cjDJjqh5ZtYtCQY4',
+    BOT_TOKEN: '7431538722:AAGwEurQCu49_XsO6q2_UxVKeVE1_zq_X5g',
     ADMIN_IDS: ['5988451717']
 };
 
@@ -204,7 +204,7 @@ bot.on('text', async (msg) => {
 
         // Extract URLs from response data
         let mediaUrls = [];
-        const responseData = response.data?.data?.data || response.data?.data || [];
+        const responseData = response.data?.data || [];
         
         if (Array.isArray(responseData)) {
             // If response data is array
@@ -242,25 +242,30 @@ bot.on('text', async (msg) => {
             console.log(`Processing media ${i + 1}/${mediaUrls.length}:`, mediaUrl);
 
             try {
-                // Check media type and send accordingly
-                const isVideo = mediaUrl.toLowerCase().includes('.mp4');
-                const isGif = mediaUrl.toLowerCase().includes('.gif');
+                // Download media first
+                const mediaResponse = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+                const buffer = Buffer.from(mediaResponse.data, 'binary');
+
+                // Check file type using the URL
+                const fileName = new URL(mediaUrl).pathname.toLowerCase();
+                const isVideo = fileName.includes('.mp4');
+                const isGif = fileName.includes('.gif');
 
                 if (isVideo) {
-                    console.log('Sending video:', mediaUrl);
-                    await bot.sendVideo(chatId, mediaUrl, {
+                    console.log('Sending video file');
+                    await bot.sendVideo(chatId, buffer, {
                         caption,
                         parse_mode: 'Markdown'
                     });
                 } else if (isGif) {
-                    console.log('Sending GIF:', mediaUrl);
-                    await bot.sendAnimation(chatId, mediaUrl, {
+                    console.log('Sending GIF file');
+                    await bot.sendAnimation(chatId, buffer, {
                         caption,
                         parse_mode: 'Markdown'
                     });
                 } else {
-                    console.log('Sending photo:', mediaUrl);
-                    await bot.sendPhoto(chatId, mediaUrl, {
+                    console.log('Sending photo file');
+                    await bot.sendPhoto(chatId, buffer, {
                         caption,
                         parse_mode: 'Markdown'
                     });
