@@ -281,7 +281,7 @@ bot.onText(/\/start/, async (msg) => {
     };
 
     const welcomeText = 
-        '*Welcome to Instagram Downloader Bot* 🎥\n\n' +
+        '*Welcome to Insta Downloader Bot* 🎥\n\n' +
         'Before using this bot, please:\n' +
         '1️⃣ Join our channel: @dagetfreenewnew\n' +
         '2️⃣ Join: @listprojec\n\n' +
