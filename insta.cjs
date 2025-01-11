@@ -216,8 +216,9 @@ bot.on('text', async (msg) => {
         });
         console.log('API Response:', response.data); // Debug log
 
-        if (response.data.success && response.data.data && response.data.data.length > 0) {
-            const mediaUrls = response.data.data;
+        if (response.data.success && response.data.data && response.data.data.data) {
+            const mediaData = response.data.data.data;
+            const urls = mediaData.map(item => item.url);
             console.log('Found media URLs:', mediaUrls.length); // Debug log
 
             // Update status: Downloading
@@ -246,7 +247,7 @@ bot.on('text', async (msg) => {
                               mediaUrls[i].type === 'video';
                 
                 const caption = (mediaUrls.length === 1 || isLastItem) ? 
-                    '```Downloaded by @hiyaok & @downloaderinstarobot```' : 
+                    'Downloaded by @hiyaok & @downloaderinstarobot' : 
                     '';
 
                 try {
@@ -324,11 +325,11 @@ bot.onText(/\/start/, async (msg) => {
     };
 
     const welcomeText = 
-        '*Welcome to TikTok Downloader Bot* 🎥\n\n' +
+        '*Welcome to Insta Downloader Bot* 🎥\n\n' +
         'Before using this bot, please:\n' +
         '1️⃣ Join our channel: @dagetfreenewnew\n' +
         '2️⃣ Join: @listprojec\n\n' +
-        '_Send me any TikTok link to download!_ ✨';
+        '_Send me any Instagram link to download!_ ✨';
 
     bot.sendMessage(chatId, welcomeText, {
         parse_mode: 'Markdown',
