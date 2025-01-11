@@ -216,10 +216,16 @@ bot.on('text', async (msg) => {
         });
         console.log('API Response:', response.data); // Debug log
 
-        if (response.data.success && response.data.data && response.data.data.data) {
+        if (response.data.success && response.data.data && Array.isArray(response.data.data.data)) {
             const mediaData = response.data.data.data;
-            const urls = mediaData.map(item => item.url);
+            const mediaUrls = mediaData.map(item => item.url).filter(Boolean); // Ambil hanya bagian URL yang valid
+            
             console.log('Found media URLs:', mediaUrls.length); // Debug log
+
+            // Jika tidak ada URL
+            if (mediaUrls.length === 0) {
+                throw new Error('No media URLs found in the API response');
+            }
 
             // Update status: Downloading
             await bot.editMessageText(
@@ -236,18 +242,16 @@ bot.on('text', async (msg) => {
 
             // Send all media files
             for (let i = 0; i < mediaUrls.length; i++) {
-                const mediaUrl = mediaUrls[i].url;
+                const mediaUrl = mediaUrls[i];
                 const isLastItem = i === mediaUrls.length - 1;
-                
+
                 console.log('Processing media URL:', mediaUrl); // Debug log
-                
+
                 // Determine if it's a video or photo
-                const isVideo = mediaUrl.includes('.mp4') || 
-                              mediaUrl.includes('video') || 
-                              mediaUrls[i].type === 'video';
-                
+                const isVideo = mediaUrl.includes('.mp4');
+
                 const caption = (mediaUrls.length === 1 || isLastItem) ? 
-                    'Downloaded by @hiyaok & @downloaderinstarobot' : 
+                    '`Downloaded by @hiyaok & @downloaderinstarobot`' : 
                     '';
 
                 try {
@@ -278,7 +282,7 @@ bot.on('text', async (msg) => {
                 }
             }
         } else {
-            throw new Error('No media data found in API response');
+            throw new Error('Invalid API response structure or no media found');
         }
     } catch (error) {
         console.error('Download error:', error); // Debug log
