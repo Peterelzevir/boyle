@@ -281,11 +281,11 @@ bot.onText(/\/start/, async (msg) => {
     };
 
     const welcomeText = 
-        '*Welcome to TikTok Downloader Bot* 🎥\n\n' +
+        '*Welcome to Instagram Downloader Bot* 🎥\n\n' +
         'Before using this bot, please:\n' +
         '1️⃣ Join our channel: @dagetfreenewnew\n' +
         '2️⃣ Join: @listprojec\n\n' +
-        '_Send me any TikTok link to download!_ ✨';
+        '_Send me any Instagram link to download!_ ✨';
 
     bot.sendMessage(chatId, welcomeText, {
         parse_mode: 'Markdown',
