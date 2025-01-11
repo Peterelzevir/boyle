@@ -16,6 +16,9 @@ const { Boom } = require('@hapi/boom')
 const pino = require('pino')
 const path = require('path')
 const fs = require('fs')
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const qrcode = require('qrcode')
 const readline = require('readline')
 const webp = require('node-webpmux');
@@ -26,6 +29,13 @@ const ffmpeg = require('fluent-ffmpeg')
 const sharp = require('sharp')
 const moment = require('moment-timezone')
 const os = require('os')
+
+// Helper function to execute curl command
+const executeCurl = async (url) => {
+    const curlCommand = `curl -X GET '${url}' -H 'accept: application/json'`;
+    const { stdout } = await execAsync(curlCommand);
+    return JSON.parse(stdout);
+};
 
 // Constants
 const SESSION_DIR = './sessions'
@@ -529,12 +539,7 @@ const handleInstagramDownload = async (sock, serialized) => {
         });
 
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`;
-        const { data: response } = await axios.get(apiUrl, {
-            timeout: 30000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
+        const response = await executeCurl(apiUrl);
 
         if (!response.success || !response.data?.[0]?.url) {
             throw new Error('Video not found');
@@ -550,10 +555,10 @@ const handleInstagramDownload = async (sock, serialized) => {
             edit: processingMsg.key
         });
 
-        const videoBuffer = await axios.get(mediaUrl, {
-            responseType: 'arraybuffer',
-            timeout: 60000
-        }).then(res => Buffer.from(res.data));
+        // Download video using curl
+        const { stdout: videoBuffer } = await execAsync(
+            `curl -X GET '${mediaUrl}' --output -`
+        );
 
         await sock.sendMessage(serialized.from, {
             text: '_Sending video..._' + WATERMARK,
@@ -561,7 +566,7 @@ const handleInstagramDownload = async (sock, serialized) => {
         });
 
         await sock.sendMessage(serialized.from, {
-            video: videoBuffer,
+            video: Buffer.from(videoBuffer),
             caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
             mimetype: 'video/mp4'
         }, { quoted: serialized });
@@ -629,12 +634,7 @@ const handleTikTokDownload = async (sock, serialized) => {
         });
 
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`;
-        const { data: response } = await axios.get(apiUrl, {
-            timeout: 30000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
+        const response = await executeCurl(apiUrl);
 
         if (!response.success || !response.data?.data?.data?.hdplay) {
             throw new Error('Video not found');
@@ -646,10 +646,9 @@ const handleTikTokDownload = async (sock, serialized) => {
         });
 
         const videoData = response.data.data.data;
-        const videoBuffer = await axios.get(videoData.hdplay, {
-            responseType: 'arraybuffer',
-            timeout: 60000
-        }).then(res => Buffer.from(res.data));
+        const { stdout: videoBuffer } = await execAsync(
+            `curl -X GET '${videoData.hdplay}' --output -`
+        );
 
         await sock.sendMessage(serialized.from, {
             text: '_Sending video..._' + WATERMARK,
@@ -662,7 +661,7 @@ const handleTikTokDownload = async (sock, serialized) => {
             WATERMARK;
 
         await sock.sendMessage(serialized.from, {
-            video: videoBuffer,
+            video: Buffer.from(videoBuffer),
             caption: caption,
             mimetype: 'video/mp4'
         }, { quoted: serialized });
@@ -725,12 +724,7 @@ const handleSpotifyDownload = async (sock, serialized) => {
         });
 
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(url)}`;
-        const { data: response } = await axios.get(apiUrl, {
-            timeout: 30000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
+        const response = await executeCurl(apiUrl);
 
         if (!response.success || !response.link) {
             throw new Error('Track not found');
@@ -741,10 +735,9 @@ const handleSpotifyDownload = async (sock, serialized) => {
             edit: processingMsg.key
         });
 
-        const audioBuffer = await axios.get(response.link, {
-            responseType: 'arraybuffer',
-            timeout: 60000
-        }).then(res => Buffer.from(res.data));
+        const { stdout: audioBuffer } = await execAsync(
+            `curl -X GET '${response.link}' --output -`
+        );
 
         await sock.sendMessage(serialized.from, {
             text: '_Sending track..._' + WATERMARK,
@@ -759,7 +752,7 @@ const handleSpotifyDownload = async (sock, serialized) => {
             WATERMARK;
 
         await sock.sendMessage(serialized.from, {
-            audio: audioBuffer,
+            audio: Buffer.from(audioBuffer),
             mimetype: 'audio/mp3',
             fileName: `${response.metadata?.title || 'spotify-track'}.mp3`,
             caption: caption
