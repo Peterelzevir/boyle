@@ -105,14 +105,28 @@ async function broadcastPromo(messageIndex) {
 }
 
 function isInstagramUrl(url) {
+    // Support more Instagram URL formats including share URLs
     const instagramPatterns = [
         /https?:\/\/(?:www\.)?instagram\.com\/p\/[\w-]+/,
         /https?:\/\/(?:www\.)?instagram\.com\/reel\/[\w-]+/,
         /https?:\/\/(?:www\.)?instagram\.com\/stories\/[\w-]+/,
         /https?:\/\/(?:www\.)?instagram\.com\/tv\/[\w-]+/,
-        /https?:\/\/(?:www\.)?instagr\.am\/p\/[\w-]+/
+        /https?:\/\/(?:www\.)?instagr\.am\/p\/[\w-]+/,
+        /https?:\/\/(?:www\.)?instagram\.com\/(p|reel|tv)\/[\w-]+\/?/,
+        // New patterns for share URLs
+        /https?:\/\/(?:www\.)?instagram\.com\/share\/p\/[\w-]+/,
+        /https?:\/\/(?:www\.)?instagram\.com\/share\/reel\/[\w-]+/,
+        /https?:\/\/(?:www\.)?instagram\.com\/share\/story\/[\w-]+/,
+        /https?:\/\/(?:www\.)?instagram\.com\/share\/tv\/[\w-]+/,
+        // Generic share pattern
+        /https?:\/\/(?:www\.)?instagram\.com\/share\/[\w-\/]+/
     ];
-    return instagramPatterns.some(pattern => pattern.test(url));
+    
+    console.log('Checking URL:', url); // Debug log
+    const isValid = instagramPatterns.some(pattern => pattern.test(url));
+    console.log('Is valid Instagram URL?', isValid); // Debug log
+    
+    return isValid;
 }
 
 // Handle Instagram URLs
@@ -120,16 +134,23 @@ bot.on('text', async (msg) => {
     const chatId = msg.chat.id;
     const url = msg.text;
 
+    console.log('Received message:', url); // Debug log
+
     if (!isInstagramUrl(url)) {
+        console.log('Not an Instagram URL, ignoring'); // Debug log
         return;
     }
 
+    console.log('Valid Instagram URL detected, processing...'); // Debug log
     activeUsers.add(chatId);
 
     // Check membership
     if (!isAdmin(msg.from.id)) {
+        console.log('Checking membership for user:', msg.from.id); // Debug log
         try {
             const isMember = await checkMembership(msg.from.id);
+            console.log('Membership status:', isMember); // Debug log
+            
             if (!isMember) {
                 const keyboard = {
                     inline_keyboard: [
@@ -143,7 +164,7 @@ bot.on('text', async (msg) => {
                     ]
                 };
 
-                return bot.sendMessage(chatId,
+                await bot.sendMessage(chatId,
                     '*⚠️ Access Restricted*\n\n' +
                     'You need to join our channels first:\n' +
                     '1️⃣ @dagetfreenewnew\n' +
@@ -154,23 +175,27 @@ bot.on('text', async (msg) => {
                         reply_markup: keyboard
                     }
                 );
+                return;
             }
         } catch (error) {
             console.error('Membership check error:', error);
-            return bot.sendMessage(chatId, 
+            await bot.sendMessage(chatId, 
                 '*⚠️ Error checking membership*\nPlease try again later.',
                 { parse_mode: 'Markdown' }
             );
+            return;
         }
     }
 
     // Send initial processing message
-    const processMsg = await bot.sendMessage(chatId, 
-        '*🔍 Processing Instagram URL...*',
-        { parse_mode: 'Markdown' }
-    );
-
+    let processMsg;
     try {
+        processMsg = await bot.sendMessage(chatId, 
+            '*🔍 Processing Instagram URL...*',
+            { parse_mode: 'Markdown' }
+        );
+        console.log('Sent processing message'); // Debug log
+
         // Update status: Fetching data
         await bot.editMessageText(
             '*📥 Fetching media data...*',
@@ -182,15 +207,18 @@ bot.on('text', async (msg) => {
         );
 
         // Make API request
+        console.log('Making API request for URL:', url); // Debug log
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`;
         const response = await axios.get(apiUrl, {
             headers: {
                 'accept': 'application/json'
             }
         });
+        console.log('API Response:', response.data); // Debug log
 
-        if (response.data.success && response.data.data) {
+        if (response.data.success && response.data.data && response.data.data.length > 0) {
             const mediaUrls = response.data.data;
+            console.log('Found media URLs:', mediaUrls.length); // Debug log
 
             // Update status: Downloading
             await bot.editMessageText(
@@ -210,56 +238,71 @@ bot.on('text', async (msg) => {
                 const mediaUrl = mediaUrls[i].url;
                 const isLastItem = i === mediaUrls.length - 1;
                 
-                // Determine if it's a video or photo based on URL or type
-                const isVideo = mediaUrl.includes('.mp4') || mediaUrls[i].type === 'video';
+                console.log('Processing media URL:', mediaUrl); // Debug log
                 
-                // Prepare caption (only for single media or last item in multiple media)
+                // Determine if it's a video or photo
+                const isVideo = mediaUrl.includes('.mp4') || 
+                              mediaUrl.includes('video') || 
+                              mediaUrls[i].type === 'video';
+                
                 const caption = (mediaUrls.length === 1 || isLastItem) ? 
                     '```Downloaded by @hiyaok & @downloaderinstarobot```' : 
                     '';
 
                 try {
                     if (isVideo) {
+                        console.log('Sending video...'); // Debug log
                         await bot.sendVideo(chatId, mediaUrl, {
                             caption: caption,
                             parse_mode: 'Markdown'
                         });
                     } else {
+                        console.log('Sending photo...'); // Debug log
                         await bot.sendPhoto(chatId, mediaUrl, {
                             caption: caption,
                             parse_mode: 'Markdown'
                         });
                     }
                     
-                    // Add small delay between sending multiple media
+                    // Add delay between media
                     if (!isLastItem) {
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 } catch (mediaError) {
                     console.error('Error sending media:', mediaError);
                     await bot.sendMessage(chatId,
-                        '*❌ Failed to send some media*\nPlease try again later.',
+                        `*❌ Failed to send media ${i + 1}*\nSkipping to next...`,
                         { parse_mode: 'Markdown' }
                     );
                 }
             }
         } else {
-            throw new Error('Failed to get media data');
+            throw new Error('No media data found in API response');
         }
     } catch (error) {
-        console.error('Download error:', error);
+        console.error('Download error:', error); // Debug log
         
         // Update error message
-        await bot.editMessageText(
-            '```*❌ Download Failed*```\n\n' +
-            '_Sorry, there was an error processing your request._\n' +
-            'Please try again later! 🔄',
-            {
-                chat_id: chatId,
-                message_id: processMsg.message_id,
-                parse_mode: 'Markdown'
-            }
-        );
+        if (processMsg) {
+            await bot.editMessageText(
+                '*❌ Download Failed*\n\n' +
+                '_Sorry, there was an error processing your request._\n' +
+                'Please try again later! 🔄\n\n' +
+                `Error: ${error.message}`,
+                {
+                    chat_id: chatId,
+                    message_id: processMsg.message_id,
+                    parse_mode: 'Markdown'
+                }
+            ).catch(console.error);
+        } else {
+            await bot.sendMessage(chatId,
+                '*❌ Download Failed*\n\n' +
+                '_Sorry, there was an error processing your request._\n' +
+                'Please try again later! 🔄',
+                { parse_mode: 'Markdown' }
+            ).catch(console.error);
+        }
     }
 });
 
@@ -281,11 +324,11 @@ bot.onText(/\/start/, async (msg) => {
     };
 
     const welcomeText = 
-        '*Welcome to Insta Downloader Bot* 🎥\n\n' +
+        '*Welcome to TikTok Downloader Bot* 🎥\n\n' +
         'Before using this bot, please:\n' +
         '1️⃣ Join our channel: @dagetfreenewnew\n' +
         '2️⃣ Join: @listprojec\n\n' +
-        '_Send me any Instagram link to download!_ ✨';
+        '_Send me any TikTok link to download!_ ✨';
 
     bot.sendMessage(chatId, welcomeText, {
         parse_mode: 'Markdown',
