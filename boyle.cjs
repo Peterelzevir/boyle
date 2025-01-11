@@ -37,6 +37,19 @@ const executeCurl = async (url) => {
     return JSON.parse(stdout);
 };
 
+// Helper to execute curl with timeout
+const execWithTimeout = async (command) => {
+    try {
+        const { stdout } = await execAsync(command, { timeout: 180000 }); // 3 minutes timeout
+        return stdout;
+    } catch (error) {
+        if (error.signal === 'SIGTERM' && error.killed) {
+            throw new Error('Request timeout after 3 minutes');
+        }
+        throw error;
+    }
+};
+
 // Constants
 const SESSION_DIR = './sessions'
 const TEMP_DIR = './temp'
@@ -501,10 +514,8 @@ const handleStickerCommand = async (sock, serialized) => {
 // Instagram Handler
 const handleInstagramDownload = async (sock, serialized) => {
     const senderId = serialized.sender;
-    console.log('1. Instagram handler started for sender:', senderId);
-
+    
     if (!waitingResponse.has(senderId)) {
-        console.log('2. Setting waiting response for Instagram');
         waitingResponse.set(senderId, { type: 'instagram' });
         await sock.sendMessage(serialized.from, {
             text: '*📥 INSTAGRAM DOWNLOADER*\n\nPlease send the Instagram video URL (Reels/Post)' + WATERMARK
@@ -514,10 +525,8 @@ const handleInstagramDownload = async (sock, serialized) => {
 
     const url = serialized.message?.conversation || 
                 serialized.message?.extendedTextMessage?.text || '';
-    console.log('3. URL received:', url);
 
     if (!url.includes('instagram.com')) {
-        console.log('4. Invalid Instagram URL');
         waitingResponse.delete(senderId);
         await sock.sendMessage(serialized.from, {
             text: '*❌ Invalid Instagram URL!*\nPlease send a valid Instagram video URL.' + WATERMARK
@@ -526,44 +535,21 @@ const handleInstagramDownload = async (sock, serialized) => {
     }
 
     waitingResponse.delete(senderId);
-    console.log('5. Processing Instagram URL');
-
     const processingMsg = await sock.sendMessage(serialized.from, {
         text: '_Processing Instagram video..._' + WATERMARK
     });
 
     try {
-        await sock.sendMessage(serialized.from, {
-            text: '_Getting video information..._' + WATERMARK,
-            edit: processingMsg.key
-        });
-
-        const apiUrl = `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`;
-        const response = await executeCurl(apiUrl);
+        const curlCmd = `curl -X GET 'https://api.ryzendesu.vip/api/downloader/igdl?url=${url}' -H 'accept: application/json'`;
+        const stdout = await execWithTimeout(curlCmd);
+        const response = JSON.parse(stdout);
 
         if (!response.success || !response.data?.[0]?.url) {
             throw new Error('Video not found');
         }
 
         const mediaUrl = response.data[0].url;
-        if (!mediaUrl.includes('.mp4')) {
-            throw new Error('Not a video');
-        }
-
-        await sock.sendMessage(serialized.from, {
-            text: '_Downloading video..._' + WATERMARK,
-            edit: processingMsg.key
-        });
-
-        // Download video using curl
-        const { stdout: videoBuffer } = await execAsync(
-            `curl -X GET '${mediaUrl}' --output -`
-        );
-
-        await sock.sendMessage(serialized.from, {
-            text: '_Sending video..._' + WATERMARK,
-            edit: processingMsg.key
-        });
+        const videoBuffer = await execWithTimeout(`curl -X GET '${mediaUrl}' --output -`);
 
         await sock.sendMessage(serialized.from, {
             video: Buffer.from(videoBuffer),
@@ -574,14 +560,7 @@ const handleInstagramDownload = async (sock, serialized) => {
     } catch (error) {
         console.error('Instagram error:', error);
         let errorMessage = '*❌ Failed to download Instagram video.*\n';
-        
-        if (error.message.includes('Not a video')) {
-            errorMessage = '*❌ Only video posts are supported.*';
-        } else if (error.message.includes('Video not found')) {
-            errorMessage = '*❌ Video not found or is private.*';
-        } else {
-            errorMessage += 'Please check your URL and try again.';
-        }
+        errorMessage += 'Please check your URL and try again.';
 
         await sock.sendMessage(serialized.from, {
             text: errorMessage + WATERMARK
@@ -596,10 +575,8 @@ const handleInstagramDownload = async (sock, serialized) => {
 // TikTok Handler
 const handleTikTokDownload = async (sock, serialized) => {
     const senderId = serialized.sender;
-    console.log('1. TikTok handler started for sender:', senderId);
-
+    
     if (!waitingResponse.has(senderId)) {
-        console.log('2. Setting waiting response for TikTok');
         waitingResponse.set(senderId, { type: 'tiktok' });
         await sock.sendMessage(serialized.from, {
             text: '*📥 TIKTOK DOWNLOADER*\n\nPlease send the TikTok video URL' + WATERMARK
@@ -609,10 +586,8 @@ const handleTikTokDownload = async (sock, serialized) => {
 
     const url = serialized.message?.conversation || 
                 serialized.message?.extendedTextMessage?.text || '';
-    console.log('3. URL received:', url);
 
     if (!url.includes('tiktok.com')) {
-        console.log('4. Invalid TikTok URL');
         waitingResponse.delete(senderId);
         await sock.sendMessage(serialized.from, {
             text: '*❌ Invalid TikTok URL!*\nPlease send a valid TikTok video URL.' + WATERMARK
@@ -621,39 +596,21 @@ const handleTikTokDownload = async (sock, serialized) => {
     }
 
     waitingResponse.delete(senderId);
-    console.log('5. Processing TikTok URL');
-
     const processingMsg = await sock.sendMessage(serialized.from, {
         text: '_Processing TikTok video..._' + WATERMARK
     });
 
     try {
-        await sock.sendMessage(serialized.from, {
-            text: '_Getting video information..._' + WATERMARK,
-            edit: processingMsg.key
-        });
-
-        const apiUrl = `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`;
-        const response = await executeCurl(apiUrl);
+        const curlCmd = `curl -X GET 'https://api.ryzendesu.vip/api/downloader/ttdl?url=${url}' -H 'accept: application/json'`;
+        const stdout = await execWithTimeout(curlCmd);
+        const response = JSON.parse(stdout);
 
         if (!response.success || !response.data?.data?.data?.hdplay) {
             throw new Error('Video not found');
         }
 
-        await sock.sendMessage(serialized.from, {
-            text: '_Downloading video..._' + WATERMARK,
-            edit: processingMsg.key
-        });
-
         const videoData = response.data.data.data;
-        const { stdout: videoBuffer } = await execAsync(
-            `curl -X GET '${videoData.hdplay}' --output -`
-        );
-
-        await sock.sendMessage(serialized.from, {
-            text: '_Sending video..._' + WATERMARK,
-            edit: processingMsg.key
-        });
+        const videoBuffer = await execWithTimeout(`curl -X GET '${videoData.hdplay}' --output -`);
 
         const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
             `*Title:* ${videoData.title || 'N/A'}\n` +
@@ -669,9 +626,7 @@ const handleTikTokDownload = async (sock, serialized) => {
     } catch (error) {
         console.error('TikTok error:', error);
         let errorMessage = '*❌ Failed to download TikTok video.*\n';
-        errorMessage += error.message.includes('Video not found') ? 
-            'Video not available or private.' : 
-            'Please check your URL and try again.';
+        errorMessage += 'Please check your URL and try again.';
         
         await sock.sendMessage(serialized.from, {
             text: errorMessage + WATERMARK
@@ -686,10 +641,8 @@ const handleTikTokDownload = async (sock, serialized) => {
 // Spotify Handler
 const handleSpotifyDownload = async (sock, serialized) => {
     const senderId = serialized.sender;
-    console.log('1. Spotify handler started for sender:', senderId);
-
+    
     if (!waitingResponse.has(senderId)) {
-        console.log('2. Setting waiting response for Spotify');
         waitingResponse.set(senderId, { type: 'spotify' });
         await sock.sendMessage(serialized.from, {
             text: '*📥 SPOTIFY DOWNLOADER*\n\nPlease send the Spotify track URL' + WATERMARK
@@ -699,10 +652,8 @@ const handleSpotifyDownload = async (sock, serialized) => {
 
     const url = serialized.message?.conversation || 
                 serialized.message?.extendedTextMessage?.text || '';
-    console.log('3. URL received:', url);
 
     if (!url.includes('spotify.com')) {
-        console.log('4. Invalid Spotify URL');
         waitingResponse.delete(senderId);
         await sock.sendMessage(serialized.from, {
             text: '*❌ Invalid Spotify URL!*\nPlease send a valid Spotify track URL.' + WATERMARK
@@ -711,38 +662,20 @@ const handleSpotifyDownload = async (sock, serialized) => {
     }
 
     waitingResponse.delete(senderId);
-    console.log('5. Processing Spotify URL');
-
     const processingMsg = await sock.sendMessage(serialized.from, {
         text: '_Processing Spotify track..._' + WATERMARK
     });
 
     try {
-        await sock.sendMessage(serialized.from, {
-            text: '_Getting track information..._' + WATERMARK,
-            edit: processingMsg.key
-        });
-
-        const apiUrl = `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(url)}`;
-        const response = await executeCurl(apiUrl);
+        const curlCmd = `curl -X GET 'https://api.ryzendesu.vip/api/downloader/spotify?url=${url}' -H 'accept: application/json'`;
+        const stdout = await execWithTimeout(curlCmd);
+        const response = JSON.parse(stdout);
 
         if (!response.success || !response.link) {
             throw new Error('Track not found');
         }
 
-        await sock.sendMessage(serialized.from, {
-            text: '_Downloading track..._' + WATERMARK,
-            edit: processingMsg.key
-        });
-
-        const { stdout: audioBuffer } = await execAsync(
-            `curl -X GET '${response.link}' --output -`
-        );
-
-        await sock.sendMessage(serialized.from, {
-            text: '_Sending track..._' + WATERMARK,
-            edit: processingMsg.key
-        });
+        const audioBuffer = await execWithTimeout(`curl -X GET '${response.link}' --output -`);
 
         const caption = `*${BOT_NAME} Spotify Downloader*\n\n` +
             `*Title:* ${response.metadata?.title || 'N/A'}\n` +
@@ -761,9 +694,7 @@ const handleSpotifyDownload = async (sock, serialized) => {
     } catch (error) {
         console.error('Spotify error:', error);
         let errorMessage = '*❌ Failed to download Spotify track.*\n';
-        errorMessage += error.message.includes('Track not found') ? 
-            'Track not found or is not available.' : 
-            'Please check your URL and try again.';
+        errorMessage += 'Please check your URL and try again.';
 
         await sock.sendMessage(serialized.from, {
             text: errorMessage + WATERMARK
