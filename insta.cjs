@@ -4,7 +4,7 @@ const cron = require('node-cron');
 
 // Bot Configuration
 const config = {
-    BOT_TOKEN: '7431538722:AAGwEurQCu49_XsO6q2_UxVKeVE1_zq_X5g',
+    BOT_TOKEN: '7431538722:AAH1u5OXXSkXQS0aaS1cjDJjqh5ZtYtCQY4',
     ADMIN_IDS: ['5988451717']
 };
 
