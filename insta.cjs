@@ -158,9 +158,7 @@ bot.on('text', async (msg) => {
                             { text: '🔔 Join Channel', url: 't.me/dagetfreenewnew' },
                             { text: '📋 Join ListProject', url: 't.me/listprojec' }
                         ],
-                        [
-                            { text: '✅ Check Membership', callback_data: 'check_membership' }
-                        ]
+                        [{ text: '✅ Check Membership', callback_data: 'check_membership' }]
                     ]
                 };
 
@@ -170,10 +168,7 @@ bot.on('text', async (msg) => {
                     '1️⃣ @dagetfreenewnew\n' +
                     '2️⃣ @listprojec\n\n' +
                     '_Join and verify your membership!_ 🔄',
-                    {
-                        parse_mode: 'Markdown',
-                        reply_markup: keyboard
-                    }
+                    { parse_mode: 'Markdown', reply_markup: keyboard }
                 );
                 return;
             }
@@ -187,34 +182,25 @@ bot.on('text', async (msg) => {
         }
     }
 
-    // Send initial processing message
     let processMsg;
     try {
-        processMsg = await bot.sendMessage(chatId, 
-            '*🔍 Processing Instagram URL...*',
-            { parse_mode: 'Markdown' }
-        );
-        console.log('Sent processing message'); // Debug log
+        processMsg = await bot.sendMessage(chatId, '*🔍 Processing Instagram URL...*', { parse_mode: 'Markdown' });
+        console.log('Sent processing message');
 
         // Update status: Fetching data
-        await bot.editMessageText(
-            '*📥 Fetching media data...*',
-            {
-                chat_id: chatId,
-                message_id: processMsg.message_id,
-                parse_mode: 'Markdown'
-            }
-        );
+        await bot.editMessageText('*📥 Fetching media data...*', {
+            chat_id: chatId,
+            message_id: processMsg.message_id,
+            parse_mode: 'Markdown'
+        });
 
         // Make API request
-        console.log('Making API request for URL:', url); // Debug log
+        console.log('Making API request for URL:', url);
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`;
         const response = await axios.get(apiUrl, {
-            headers: {
-                'accept': 'application/json'
-            }
+            headers: { 'accept': 'application/json' }
         });
-        console.log('API Response:', response.data); // Debug log
+        console.log('API Response:', JSON.stringify(response.data, null, 2));
 
         // Extract URLs from response data
         let mediaUrls = [];
@@ -228,21 +214,18 @@ bot.on('text', async (msg) => {
             mediaUrls = [responseData.url];
         }
 
-        console.log('Found media URLs:', mediaUrls.length); // Debug log
+        console.log('Found media URLs:', mediaUrls.length);
 
         if (mediaUrls.length === 0) {
             throw new Error('No media URLs found in the API response');
         }
 
         // Update status: Downloading
-        await bot.editMessageText(
-            '*⬇️ Downloading media...*',
-            {
-                chat_id: chatId,
-                message_id: processMsg.message_id,
-                parse_mode: 'Markdown'
-            }
-        );
+        await bot.editMessageText('*⬇️ Downloading media...*', {
+            chat_id: chatId,
+            message_id: processMsg.message_id,
+            parse_mode: 'Markdown'
+        });
 
         // Delete processing message
         await bot.deleteMessage(chatId, processMsg.message_id);
@@ -251,40 +234,44 @@ bot.on('text', async (msg) => {
         for (let i = 0; i < mediaUrls.length; i++) {
             const mediaUrl = mediaUrls[i];
             const isLastItem = i === mediaUrls.length - 1;
-
-            console.log('Processing media URL:', mediaUrl); // Debug log
-
+            
+            // Add caption only for single media or last item
             const caption = (mediaUrls.length === 1 || isLastItem) ? 
-                '`Downloaded by @hiyaok & @downloaderinstarobot`' : 
-                '';
+                '`Downloaded by @hiyaok & @downloaderinstarobot`' : '';
+
+            console.log(`Processing media ${i + 1}/${mediaUrls.length}:`, mediaUrl);
 
             try {
-                if (mediaUrl.includes('.mp4')) {
-                    console.log('Sending video...'); // Debug log
+                // Check media type and send accordingly
+                const isVideo = mediaUrl.toLowerCase().includes('.mp4');
+                const isGif = mediaUrl.toLowerCase().includes('.gif');
+
+                if (isVideo) {
+                    console.log('Sending video:', mediaUrl);
                     await bot.sendVideo(chatId, mediaUrl, {
-                        caption: caption,
+                        caption,
                         parse_mode: 'Markdown'
                     });
-                } else if (mediaUrl.includes('.gif')) {
-                    console.log('Sending GIF...'); // Debug log
+                } else if (isGif) {
+                    console.log('Sending GIF:', mediaUrl);
                     await bot.sendAnimation(chatId, mediaUrl, {
-                        caption: caption,
+                        caption,
                         parse_mode: 'Markdown'
                     });
                 } else {
-                    console.log('Sending photo...'); // Debug log
+                    console.log('Sending photo:', mediaUrl);
                     await bot.sendPhoto(chatId, mediaUrl, {
-                        caption: caption,
+                        caption,
                         parse_mode: 'Markdown'
                     });
                 }
-                
-                // Add delay between media
+
+                // Add delay between media sends (except for last item)
                 if (!isLastItem) {
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             } catch (mediaError) {
-                console.error('Error sending media:', mediaError);
+                console.error(`Error sending media ${i + 1}:`, mediaError);
                 await bot.sendMessage(chatId,
                     `*❌ Failed to send media ${i + 1}*\nSkipping to next...`,
                     { parse_mode: 'Markdown' }
@@ -292,9 +279,8 @@ bot.on('text', async (msg) => {
             }
         }
     } catch (error) {
-        console.error('Download error:', error); // Debug log
+        console.error('Download error:', error);
         
-        // Update error message
         if (processMsg) {
             await bot.editMessageText(
                 '*❌ Download Failed*\n\n' +
