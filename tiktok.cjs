@@ -89,14 +89,22 @@ async function broadcastPromo(messageIndex) {
     }
 }
 
-// Fungsi untuk validasi URL TikTok
 function isTikTokUrl(url) {
+    // Support more TikTok URL formats
     const tiktokPatterns = [
         /https?:\/\/(?:www\.)?tiktok\.com\/@[\w.-]+\/video\/\d+/,
         /https?:\/\/(?:www\.)?tiktok\.com\/t\/[\w-]+/,
-        /https?:\/\/(?:www\.)?vm\.tiktok\.com\/[\w-]+/
+        /https?:\/\/(?:www\.)?vm\.tiktok\.com\/[\w-]+/,
+        /https?:\/\/(?:www\.)?vt\.tiktok\.com\/[\w-]+/,
+        /https?:\/\/(?:www\.)?tiktok\.com\/.*?\/video\/\d+/,
+        /https?:\/\/(?:[a-zA-Z0-9-]+\.)?tiktok\.com\/.*?\/\d+/
     ];
-    return tiktokPatterns.some(pattern => pattern.test(url));
+    
+    console.log('Checking URL:', url);
+    const isValid = tiktokPatterns.some(pattern => pattern.test(url));
+    console.log('URL valid?', isValid);
+    
+    return isValid;
 }
 
 // Command /start
@@ -134,13 +142,25 @@ bot.on('text', async (msg) => {
     const chatId = msg.chat.id;
     const url = msg.text;
 
-    if (!isTikTokUrl(url)) return;
+    console.log('Received message:', msg.text); // Debug log 1
+
+    // Cek URL TikTok
+    if (!isTikTokUrl(url)) {
+        console.log('Not a TikTok URL'); // Debug log 2
+        return;
+    }
+
+    console.log('Valid TikTok URL detected'); // Debug log 3
     activeUsers.add(chatId);
 
     // Check membership kecuali admin
     if (!isAdmin(msg.from.id)) {
+        console.log('Checking membership...'); // Debug log 4
         const isMember = await checkMembership(msg.from.id);
+        console.log('Membership status:', isMember); // Debug log 5
+
         if (!isMember) {
+            console.log('User not a member'); // Debug log 6
             const keyboard = {
                 inline_keyboard: [
                     [
@@ -167,6 +187,8 @@ bot.on('text', async (msg) => {
         }
     }
 
+    console.log('Starting download process...'); // Debug log 7
+
     // Kirim pesan proses awal
     const processMsg = await bot.sendMessage(chatId, 
         '*🔍 Memeriksa URL TikTok...*',
@@ -174,6 +196,8 @@ bot.on('text', async (msg) => {
     );
     
     try {
+        console.log('Calling TikTok API...'); // Debug log 8
+        
         // Update: Fetching data
         await bot.editMessageText(
             '*📥 Mengambil data video...*',
@@ -184,12 +208,18 @@ bot.on('text', async (msg) => {
             }
         );
 
-        const response = await axios.get(`https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`);
+        const apiUrl = `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`;
+        console.log('API URL:', apiUrl); // Debug log 9
+
+        const response = await axios.get(apiUrl);
+        console.log('API Response:', response.data); // Debug log 10
         
         if (response.data.success) {
             const videoData = response.data.data.data;
             const hdplayUrl = videoData.hdplay;
             
+            console.log('HD URL:', hdplayUrl); // Debug log 11
+
             // Update: Downloading
             await bot.editMessageText(
                 '*⬇️ Mendownload video...*',
@@ -219,7 +249,9 @@ bot.on('text', async (msg) => {
                 `└ ❤️ Likes: \`${videoData.digg_count.toLocaleString()}\`\n` +
                 `└ 💭 Comments: \`${videoData.comment_count.toLocaleString()}\`\n` +
                 `└ 🔄 Shares: \`${videoData.share_count.toLocaleString()}\`\n\n` +
-                `*🤖 @downloadertiktokrobot*`;
+                `*🤖 @hiyaok*`;
+
+            console.log('Sending video...'); // Debug log 12
 
             // Delete process message
             await bot.deleteMessage(chatId, processMsg.message_id);
@@ -228,16 +260,22 @@ bot.on('text', async (msg) => {
             await bot.sendVideo(chatId, hdplayUrl, {
                 caption: caption,
                 parse_mode: 'Markdown'
+            }).then(() => {
+                console.log('Video sent successfully'); // Debug log 13
+            }).catch((err) => {
+                console.error('Error sending video:', err); // Debug log 14
             });
+
         } else {
             throw new Error('Failed to get video data');
         }
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Download error:', error); // Debug log 15
         bot.editMessageText(
             '*❌ Download Failed*\n\n' +
             '_Sorry, there was an error processing your request._\n' +
-            'Please try again later! 🔄',
+            'Please try again later! 🔄\n\n' +
+            `*Error:* ${error.message}`,
             {
                 chat_id: chatId,
                 message_id: processMsg.message_id,
