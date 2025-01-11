@@ -19,18 +19,33 @@ function isAdmin(userId) {
     return config.ADMIN_IDS.includes(userId.toString());
 }
 
-// Check membership
+// Check membership function with improved error handling
 async function checkMembership(userId) {
     try {
         if (isAdmin(userId)) return true;
+        
         const channels = ['@dagetfreenewnew', '@listprojec'];
+        
         for (const channel of channels) {
-            const member = await bot.getChatMember(channel, userId);
-            if (member.status !== 'member') return false;
+            try {
+                const member = await bot.getChatMember(channel, userId);
+                // Check for all valid member statuses
+                const validStatuses = ['member', 'administrator', 'creator'];
+                if (!validStatuses.includes(member.status)) {
+                    console.log(`User ${userId} is not a member of ${channel}. Status: ${member.status}`);
+                    return false;
+                }
+            } catch (channelError) {
+                console.error(`Error checking membership for ${channel}:`, channelError);
+                // If we can't verify membership, we assume they're not a member
+                return false;
+            }
         }
+        
         return true;
     } catch (error) {
-        console.error('Membership check error:', error);
+        console.error('General membership check error:', error);
+        // If there's any error in the process, default to false for safety
         return false;
     }
 }
@@ -285,27 +300,34 @@ bot.on('text', async (msg) => {
     }
 });
 
-// Handle callback queries
+// Modified callback query handler
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
 
     if (query.data === 'check_membership') {
-        const isMember = await checkMembership(query.from.id);
-        if (isMember) {
+        try {
+            const isMember = await checkMembership(query.from.id);
+            if (isMember) {
+                await bot.answerCallbackQuery(query.id, {
+                    text: '✅ You are a member! You can use the bot now.',
+                    show_alert: true
+                });
+                await bot.deleteMessage(chatId, query.message.message_id);
+            } else {
+                await bot.answerCallbackQuery(query.id, {
+                    text: '❌ Please join both channels first!',
+                    show_alert: true
+                });
+            }
+        } catch (error) {
+            console.error('Error in callback query:', error);
             await bot.answerCallbackQuery(query.id, {
-                text: '✅ You are a member! You can use the bot now.',
-                show_alert: true
-            });
-            await bot.deleteMessage(chatId, query.message.message_id);
-        } else {
-            await bot.answerCallbackQuery(query.id, {
-                text: '❌ Please join both channels first!',
+                text: '⚠️ Error checking membership. Please try again.',
                 show_alert: true
             });
         }
     }
 });
-
 // Error handling
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error);
