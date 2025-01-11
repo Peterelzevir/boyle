@@ -367,48 +367,6 @@ const createSticker = async (mediaData, type) => {
     }
 };
 
-// Sticker Command Handler
-const handleStickerCommand = async (sock, msg) => {
-    const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (!quoted) {
-        await sock.sendMessage(msg.from, {
-            text: '❌ Reply to an image/video with .sticker command'
-        }, { quoted: msg });
-        return;
-    }
-
-    const messageType = Object.keys(quoted)[0];
-    if (!['imageMessage', 'videoMessage'].includes(messageType)) {
-        await sock.sendMessage(msg.from, {
-            text: '❌ Reply to an image/video only!'
-        }, { quoted: msg });
-        return;
-    }
-
-    const processingMsg = await sock.sendMessage(msg.from, {
-        text: '⏳ Creating sticker...'
-    }, { quoted: msg });
-
-    try {
-        const media = await downloadMedia(quoted, messageType);
-        const stickerBuffer = await createSticker(media, messageType === 'imageMessage' ? 'image' : 'video');
-        
-        await sock.sendMessage(msg.from, {
-            sticker: stickerBuffer
-        }, { quoted: msg });
-
-        await sock.sendMessage(msg.from, { 
-            delete: processingMsg.key 
-        });
-    } catch (error) {
-        console.error('Sticker creation error:', error);
-        await sock.sendMessage(msg.from, {
-            edit: processingMsg.key,
-            text: '❌ Failed to create sticker. Please try again.'
-        });
-    }
-};
-
 // ToImage Handler
 const handleToImageCommand = async (sock, msg) => {
     const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -449,31 +407,127 @@ const handleToImageCommand = async (sock, msg) => {
     }
 };
 
-// Instagram Handler (Video Only)
-const handleInstagramDownload = async (sock, msg) => {
-    const senderId = msg.sender || msg.from;
+// Sticker Handler
+const handleStickerCommand = async (sock, serialized) => {
+    const senderId = serialized.sender;
+    console.log('1. Sticker handler started for sender:', senderId);
 
-    // If no waiting response, ask for URL
     if (!waitingResponse.has(senderId)) {
-        waitingResponse.set(senderId, 'instagram');
-        await sock.sendMessage(msg.from, {
-            text: '*📥 INSTAGRAM DOWNLOADER*\n\nPlease send the Instagram video URL (Reels/Post)' + WATERMARK
-        }, { quoted: msg });
+        console.log('2. Setting waiting response for sticker');
+        waitingResponse.set(senderId, { type: 'sticker' });
+        await sock.sendMessage(serialized.from, {
+            text: '*🎨 STICKER MAKER*\n\nSilakan kirim atau reply sebuah gambar!' + WATERMARK
+        }, { quoted: serialized });
         return;
     }
 
-    // Get URL from user message
-    const url = msg.message?.conversation || 
-                msg.message?.extendedTextMessage?.text || '';
+    // Check if message contains image
+    const isImage = serialized.message?.imageMessage;
+    const isQuotedImage = serialized.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
     
+    if (!isImage && !isQuotedImage) {
+        console.log('3. No image found in message');
+        waitingResponse.delete(senderId);
+        await sock.sendMessage(serialized.from, { 
+            text: '❌ Mohon kirim gambar atau reply sebuah gambar!' + WATERMARK 
+        }, { quoted: serialized });
+        return;
+    }
+
     // Clear waiting response
     waitingResponse.delete(senderId);
+    console.log('4. Processing image to sticker');
 
-    const processingMsg = await sock.sendMessage(msg.from, {
+    const processingMsg = await sock.sendMessage(serialized.from, {
+        text: '_Sedang membuat sticker..._' + WATERMARK
+    });
+
+    try {
+        // Download the image
+        const message = isImage ? serialized : {
+            message: {
+                imageMessage: serialized.message.extendedTextMessage.contextInfo.quotedMessage.imageMessage
+            }
+        };
+
+        const media = await downloadMediaMessage(
+            message,
+            'buffer',
+            {},
+            { logger: console }
+        );
+
+        // Create sticker
+        const sticker = new Sticker(media, {
+            pack: 'boyle anak tonggi',
+            author: 'boyle anak tonggi',
+            type: StickerTypes.FULL,
+            quality: 50
+        });
+
+        const stickerBuffer = await sticker.toBuffer();
+        await writeFile('./temp-sticker.webp', stickerBuffer);
+
+        await sock.sendMessage(serialized.from, { 
+            sticker: stickerBuffer 
+        }, { 
+            quoted: serialized 
+        });
+
+    } catch (error) {
+        console.error('Sticker error:', error);
+        await sock.sendMessage(serialized.from, { 
+            text: '❌ Maaf, terjadi kesalahan saat membuat sticker!' + WATERMARK
+        }, { 
+            quoted: serialized 
+        });
+    } finally {
+        await sock.sendMessage(serialized.from, { 
+            delete: processingMsg.key 
+        }).catch(() => {});
+    }
+};
+
+// Instagram Handler
+const handleInstagramDownload = async (sock, serialized) => {
+    const senderId = serialized.sender;
+    console.log('1. Instagram handler started for sender:', senderId);
+
+    if (!waitingResponse.has(senderId)) {
+        console.log('2. Setting waiting response for Instagram');
+        waitingResponse.set(senderId, { type: 'instagram' });
+        await sock.sendMessage(serialized.from, {
+            text: '*📥 INSTAGRAM DOWNLOADER*\n\nPlease send the Instagram video URL (Reels/Post)' + WATERMARK
+        }, { quoted: serialized });
+        return;
+    }
+
+    const url = serialized.message?.conversation || 
+                serialized.message?.extendedTextMessage?.text || '';
+    console.log('3. URL received:', url);
+
+    if (!url.includes('instagram.com')) {
+        console.log('4. Invalid Instagram URL');
+        waitingResponse.delete(senderId);
+        await sock.sendMessage(serialized.from, {
+            text: '*❌ Invalid Instagram URL!*\nPlease send a valid Instagram video URL.' + WATERMARK
+        }, { quoted: serialized });
+        return;
+    }
+
+    waitingResponse.delete(senderId);
+    console.log('5. Processing Instagram URL');
+
+    const processingMsg = await sock.sendMessage(serialized.from, {
         text: '_Processing Instagram video..._' + WATERMARK
     });
 
     try {
+        await sock.sendMessage(serialized.from, {
+            text: '_Getting video information..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/igdl?url=${encodeURIComponent(url)}`;
         const { data: response } = await axios.get(apiUrl, {
             timeout: 30000,
@@ -487,21 +541,30 @@ const handleInstagramDownload = async (sock, msg) => {
         }
 
         const mediaUrl = response.data[0].url;
-        // Only process if it's video
         if (!mediaUrl.includes('.mp4')) {
             throw new Error('Not a video');
         }
 
+        await sock.sendMessage(serialized.from, {
+            text: '_Downloading video..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const videoBuffer = await axios.get(mediaUrl, {
             responseType: 'arraybuffer',
-            timeout: 60000 // Longer timeout for video download
+            timeout: 60000
         }).then(res => Buffer.from(res.data));
 
-        await sock.sendMessage(msg.from, {
+        await sock.sendMessage(serialized.from, {
+            text: '_Sending video..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
+        await sock.sendMessage(serialized.from, {
             video: videoBuffer,
             caption: `*${BOT_NAME} Instagram Downloader*` + WATERMARK,
             mimetype: 'video/mp4'
-        }, { quoted: msg });
+        }, { quoted: serialized });
 
     } catch (error) {
         console.error('Instagram error:', error);
@@ -515,38 +578,56 @@ const handleInstagramDownload = async (sock, msg) => {
             errorMessage += 'Please check your URL and try again.';
         }
 
-        await sock.sendMessage(msg.from, {
+        await sock.sendMessage(serialized.from, {
             text: errorMessage + WATERMARK
         });
     } finally {
-        await sock.sendMessage(msg.from, { 
+        await sock.sendMessage(serialized.from, { 
             delete: processingMsg.key 
         }).catch(() => {});
     }
 };
 
-// TikTok Handler with improved flow
-const handleTikTokDownload = async (sock, msg) => {
-    const senderId = msg.sender || msg.from;
+// TikTok Handler
+const handleTikTokDownload = async (sock, serialized) => {
+    const senderId = serialized.sender;
+    console.log('1. TikTok handler started for sender:', senderId);
 
     if (!waitingResponse.has(senderId)) {
-        waitingResponse.set(senderId, 'tiktok');
-        await sock.sendMessage(msg.from, {
+        console.log('2. Setting waiting response for TikTok');
+        waitingResponse.set(senderId, { type: 'tiktok' });
+        await sock.sendMessage(serialized.from, {
             text: '*📥 TIKTOK DOWNLOADER*\n\nPlease send the TikTok video URL' + WATERMARK
-        }, { quoted: msg });
+        }, { quoted: serialized });
         return;
     }
 
-    const url = msg.message?.conversation || 
-                msg.message?.extendedTextMessage?.text || '';
-    
-    waitingResponse.delete(senderId);
+    const url = serialized.message?.conversation || 
+                serialized.message?.extendedTextMessage?.text || '';
+    console.log('3. URL received:', url);
 
-    const processingMsg = await sock.sendMessage(msg.from, {
+    if (!url.includes('tiktok.com')) {
+        console.log('4. Invalid TikTok URL');
+        waitingResponse.delete(senderId);
+        await sock.sendMessage(serialized.from, {
+            text: '*❌ Invalid TikTok URL!*\nPlease send a valid TikTok video URL.' + WATERMARK
+        }, { quoted: serialized });
+        return;
+    }
+
+    waitingResponse.delete(senderId);
+    console.log('5. Processing TikTok URL');
+
+    const processingMsg = await sock.sendMessage(serialized.from, {
         text: '_Processing TikTok video..._' + WATERMARK
     });
 
     try {
+        await sock.sendMessage(serialized.from, {
+            text: '_Getting video information..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`;
         const { data: response } = await axios.get(apiUrl, {
             timeout: 30000,
@@ -559,22 +640,32 @@ const handleTikTokDownload = async (sock, msg) => {
             throw new Error('Video not found');
         }
 
+        await sock.sendMessage(serialized.from, {
+            text: '_Downloading video..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const videoData = response.data.data.data;
         const videoBuffer = await axios.get(videoData.hdplay, {
             responseType: 'arraybuffer',
             timeout: 60000
         }).then(res => Buffer.from(res.data));
 
+        await sock.sendMessage(serialized.from, {
+            text: '_Sending video..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const caption = `*${BOT_NAME} TikTok Downloader*\n\n` +
             `*Title:* ${videoData.title || 'N/A'}\n` +
             `*Author:* ${videoData.author?.nickname || 'N/A'}` +
             WATERMARK;
 
-        await sock.sendMessage(msg.from, {
+        await sock.sendMessage(serialized.from, {
             video: videoBuffer,
             caption: caption,
             mimetype: 'video/mp4'
-        }, { quoted: msg });
+        }, { quoted: serialized });
 
     } catch (error) {
         console.error('TikTok error:', error);
@@ -583,38 +674,56 @@ const handleTikTokDownload = async (sock, msg) => {
             'Video not available or private.' : 
             'Please check your URL and try again.';
         
-        await sock.sendMessage(msg.from, {
+        await sock.sendMessage(serialized.from, {
             text: errorMessage + WATERMARK
         });
     } finally {
-        await sock.sendMessage(msg.from, { 
+        await sock.sendMessage(serialized.from, { 
             delete: processingMsg.key 
         }).catch(() => {});
     }
 };
 
-// Spotify Handler with improved flow
-const handleSpotifyDownload = async (sock, msg) => {
-    const senderId = msg.sender || msg.from;
+// Spotify Handler
+const handleSpotifyDownload = async (sock, serialized) => {
+    const senderId = serialized.sender;
+    console.log('1. Spotify handler started for sender:', senderId);
 
     if (!waitingResponse.has(senderId)) {
-        waitingResponse.set(senderId, 'spotify');
-        await sock.sendMessage(msg.from, {
+        console.log('2. Setting waiting response for Spotify');
+        waitingResponse.set(senderId, { type: 'spotify' });
+        await sock.sendMessage(serialized.from, {
             text: '*📥 SPOTIFY DOWNLOADER*\n\nPlease send the Spotify track URL' + WATERMARK
-        }, { quoted: msg });
+        }, { quoted: serialized });
         return;
     }
 
-    const url = msg.message?.conversation || 
-                msg.message?.extendedTextMessage?.text || '';
-    
-    waitingResponse.delete(senderId);
+    const url = serialized.message?.conversation || 
+                serialized.message?.extendedTextMessage?.text || '';
+    console.log('3. URL received:', url);
 
-    const processingMsg = await sock.sendMessage(msg.from, {
+    if (!url.includes('spotify.com')) {
+        console.log('4. Invalid Spotify URL');
+        waitingResponse.delete(senderId);
+        await sock.sendMessage(serialized.from, {
+            text: '*❌ Invalid Spotify URL!*\nPlease send a valid Spotify track URL.' + WATERMARK
+        }, { quoted: serialized });
+        return;
+    }
+
+    waitingResponse.delete(senderId);
+    console.log('5. Processing Spotify URL');
+
+    const processingMsg = await sock.sendMessage(serialized.from, {
         text: '_Processing Spotify track..._' + WATERMARK
     });
 
     try {
+        await sock.sendMessage(serialized.from, {
+            text: '_Getting track information..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const apiUrl = `https://api.ryzendesu.vip/api/downloader/spotify?url=${encodeURIComponent(url)}`;
         const { data: response } = await axios.get(apiUrl, {
             timeout: 30000,
@@ -627,10 +736,20 @@ const handleSpotifyDownload = async (sock, msg) => {
             throw new Error('Track not found');
         }
 
+        await sock.sendMessage(serialized.from, {
+            text: '_Downloading track..._' + WATERMARK,
+            edit: processingMsg.key
+        });
+
         const audioBuffer = await axios.get(response.link, {
             responseType: 'arraybuffer',
             timeout: 60000
         }).then(res => Buffer.from(res.data));
+
+        await sock.sendMessage(serialized.from, {
+            text: '_Sending track..._' + WATERMARK,
+            edit: processingMsg.key
+        });
 
         const caption = `*${BOT_NAME} Spotify Downloader*\n\n` +
             `*Title:* ${response.metadata?.title || 'N/A'}\n` +
@@ -639,12 +758,12 @@ const handleSpotifyDownload = async (sock, msg) => {
             `*Release:* ${response.metadata?.releaseDate || 'N/A'}` +
             WATERMARK;
 
-        await sock.sendMessage(msg.from, {
+        await sock.sendMessage(serialized.from, {
             audio: audioBuffer,
             mimetype: 'audio/mp3',
             fileName: `${response.metadata?.title || 'spotify-track'}.mp3`,
             caption: caption
-        }, { quoted: msg });
+        }, { quoted: serialized });
 
     } catch (error) {
         console.error('Spotify error:', error);
@@ -653,11 +772,11 @@ const handleSpotifyDownload = async (sock, msg) => {
             'Track not found or is not available.' : 
             'Please check your URL and try again.';
 
-        await sock.sendMessage(msg.from, {
+        await sock.sendMessage(serialized.from, {
             text: errorMessage + WATERMARK
         });
     } finally {
-        await sock.sendMessage(msg.from, { 
+        await sock.sendMessage(serialized.from, { 
             delete: processingMsg.key 
         }).catch(() => {});
     }
