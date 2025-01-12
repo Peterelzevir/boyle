@@ -17,11 +17,10 @@ const cron = require('node-cron');
 const RSS = require('rss-parser');
 const sharp = require('sharp');
 const fetch = require('node-fetch');
-
-// Bot Configuration
-const token = '7903398118:AAEwEzFnw1CZDqnPlwIEHfMI_dUU9qpsy1Q';
+const TelegramBot = require('node-telegram-bot-api');
+const token = '7903398118:AAEwEzFnw1CZDqnPlwIEHfMI_dUU9qpsy1Q'; // Replace with your bot token
+const bot = new TelegramBot(token, { polling: true });
 const channelId = '@infoedukasidanbeasiswa';
-const bot = new TelegramBot(token, { polling: true }
 
 // Channel Posting Function
 async function postToChannel(item) {
