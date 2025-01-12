@@ -280,7 +280,7 @@ bot.on('error', (error) => {
 });
 
 // Start Bot
-console.log('🚀 Education Bot is running...'););
+console.log('🚀 Education Bot is running...');
 
 // Cache System
 const sentLinks = new Set();
