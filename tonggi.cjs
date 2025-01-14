@@ -1,114 +1,201 @@
 // index.js
-const { 
+const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     downloadMediaMessage
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
-const P = require('pino');
-const { writeFile } = require('fs/promises');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
-const sharp = require('sharp');
-const fs = require('fs');
-const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
-const { promisify } = require('util');
-const exec = promisify(require('child_process').exec);
+const sharp = require('sharp');
+const axios = require('axios');
+const pino = require('pino');
+const path = require('path');
+const fs = require('fs');
 
-// Function to process image
-async function processImage(buffer) {
+// Queue System
+class ProcessingQueue {
+    constructor() {
+        this.queues = new Map();
+    }
+
+    async addTask(chatId, task) {
+        if (!this.queues.has(chatId)) {
+            this.queues.set(chatId, []);
+        }
+        const queue = this.queues.get(chatId);
+        queue.push(task);
+
+        if (queue.length === 1) {
+            await this.processQueue(chatId);
+        }
+    }
+
+    async processQueue(chatId) {
+        const queue = this.queues.get(chatId);
+        while (queue && queue.length > 0) {
+            const task = queue[0];
+            try {
+                await task();
+            } catch (err) {
+                console.error(`Error processing task for ${chatId}:`, err);
+            }
+            queue.shift();
+        }
+        if (queue.length === 0) {
+            this.queues.delete(chatId);
+        }
+    }
+}
+
+// Create directories if they don't exist
+const createRequiredDirectories = () => {
+    const dirs = ['./auth', './temp', './stickers'];
+    dirs.forEach(dir => {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+    });
+};
+
+// Clean temp directory
+const cleanTempDirectory = () => {
+    const tempDir = './temp';
+    if (fs.existsSync(tempDir)) {
+        fs.readdirSync(tempDir).forEach(file => {
+            const filePath = path.join(tempDir, file);
+            fs.unlinkSync(filePath);
+        });
+    }
+};
+
+// Process image for sticker
+async function processImageForSticker(buffer) {
     const image = sharp(buffer);
     const metadata = await image.metadata();
     
-    // Ensure width and height are within WhatsApp sticker limits (max 512px)
     const maxSize = 512;
     let width = metadata.width;
     let height = metadata.height;
     
     if (width > maxSize || height > maxSize) {
-        const ratio = Math.min(maxSize / width, maxSize / height);
-        width = Math.round(width * ratio);
-        height = Math.round(height * ratio);
+        if (width > height) {
+            height = Math.round((height * maxSize) / width);
+            width = maxSize;
+        } else {
+            width = Math.round((width * maxSize) / height);
+            height = maxSize;
+        }
     }
-    
-    return await image
+
+    const processedImage = await image
         .resize(width, height, {
             fit: 'contain',
             background: { r: 0, g: 0, b: 0, alpha: 0 }
         })
+        .webp({ quality: 100 })
         .toBuffer();
+
+    return processedImage;
 }
 
-// Function to process video
-async function processVideo(inputBuffer) {
-    const tempPath = `temp_${Date.now()}`;
-    if (!fs.existsSync(tempPath)) {
-        fs.mkdirSync(tempPath);
-    }
+// Process video for sticker
+function processVideoForSticker(inputBuffer) {
+    return new Promise((resolve, reject) => {
+        const tempInput = path.join('./temp', `input_${Date.now()}.mp4`);
+        const tempOutput = path.join('./temp', `output_${Date.now()}.webp`);
 
-    const inputFile = path.join(tempPath, 'input.mp4');
-    const outputFile = path.join(tempPath, 'output.webp');
-    
+        fs.writeFileSync(tempInput, inputBuffer);
+
+        ffmpeg(tempInput)
+            .addOutputOptions([
+                '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,fps=15',
+                '-vcodec', 'libwebp',
+                '-lossless', '1',
+                '-qscale', '1',
+                '-preset', 'best',
+                '-loop', '0',
+                '-vs', '0',
+                '-t', '10',
+                '-an'
+            ])
+            .toFormat('webp')
+            .on('end', () => {
+                const outputBuffer = fs.readFileSync(tempOutput);
+                fs.unlinkSync(tempInput);
+                fs.unlinkSync(tempOutput);
+                resolve(outputBuffer);
+            })
+            .on('error', (err) => {
+                if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+                if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+                reject(err);
+            })
+            .save(tempOutput);
+    });
+}
+
+// Create sticker
+async function createSticker(buffer, isVideo = false) {
+    const stickerMetadata = {
+        type: isVideo ? StickerTypes.ANIMATED : StickerTypes.DEFAULT,
+        pack: 'boyle anak tonggi',
+        author: 'boyle anak tonggi',
+        categories: ['🤩'],
+        quality: 100
+    };
+
+    const sticker = new Sticker(buffer, stickerMetadata);
+    return await sticker.toBuffer();
+}
+
+// Download TikTok video
+async function downloadTikTok(url) {
     try {
-        // Write input buffer to temporary file
-        fs.writeFileSync(inputFile, inputBuffer);
-        
-        // Convert video to WebP using FFmpeg
-        await new Promise((resolve, reject) => {
-            ffmpeg(inputFile)
-                .addOutputOptions([
-                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,fps=12',
-                    '-vcodec', 'libwebp',
-                    '-lossless', '0',
-                    '-compression_level', '6',
-                    '-q:v', '50',
-                    '-loop', '0',
-                    '-preset', 'default',
-                    '-an',
-                    '-vsync', '0',
-                    '-t', '5' // Limit to 5 seconds
-                ])
-                .toFormat('webp')
-                .on('end', resolve)
-                .on('error', reject)
-                .save(outputFile);
+        const apiUrl = `https://api.ryzendesu.vip/api/downloader/ttdl?url=${encodeURIComponent(url)}`;
+        const response = await axios.get(apiUrl, {
+            headers: { accept: 'application/json' },
+            timeout: 30000
         });
 
-        // Read the processed file
-        const processedBuffer = fs.readFileSync(outputFile);
+        if (!response.data?.data?.hdplay) {
+            throw new Error('Video URL not found in API response');
+        }
 
-        // Cleanup
-        fs.unlinkSync(inputFile);
-        fs.unlinkSync(outputFile);
-        fs.rmdirSync(tempPath);
+        const videoUrl = response.data.data.hdplay;
+        const videoResponse = await axios.get(videoUrl, {
+            responseType: 'arraybuffer',
+            timeout: 30000
+        });
 
-        return processedBuffer;
+        return Buffer.from(videoResponse.data);
     } catch (error) {
-        // Cleanup on error
-        if (fs.existsSync(inputFile)) fs.unlinkSync(inputFile);
-        if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile);
-        if (fs.existsSync(tempPath)) fs.rmdirSync(tempPath);
+        console.error('TikTok download error:', error);
         throw error;
     }
 }
 
-// Function to handle connection
+// Main WhatsApp connection function
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const queue = new ProcessingQueue();
+    const { state, saveCreds } = await useMultiFileAuthState('./auth');
 
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
-        logger: P({ level: 'silent' }),
-        browser: ['Chrome (Linux)', '', ''] // Fix some connection issues
+        logger: pino({ level: 'silent' }),
+        browser: ['Chrome (Linux)', '', ''],
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
-
+        
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Connection closed due to:', lastDisconnect?.error, 'Reconnecting:', shouldReconnect);
@@ -117,78 +204,89 @@ async function connectToWhatsApp() {
                 connectToWhatsApp();
             }
         } else if (connection === 'open') {
-            console.log('Connected to WhatsApp');
+            console.log('WhatsApp bot connected successfully!');
         }
     });
 
-    // Handle incoming messages
-    sock.ev.on('messages.upsert', async ({ messages }) => {
+    sock.ev.on('messages.upsert', ({ messages }) => {
         const msg = messages[0];
-        
-        if (!msg.message) return;
+        if (!msg?.message) return;
 
+        const chatId = msg.key.remoteJid;
         const messageType = Object.keys(msg.message)[0];
-        
-        // Check if message contains image or video
-        if (messageType === 'imageMessage' || messageType === 'videoMessage') {
+        const messageContent = msg.message[messageType];
+
+        // Handle message processing
+        queue.addTask(chatId, async () => {
             try {
-                console.log(`Received ${messageType}, converting to sticker...`);
-                
-                // Download the media
-                const buffer = await downloadMediaMessage(
-                    msg,
-                    'buffer',
-                    {},
-                    { 
-                        logger: P({ level: 'silent' }),
-                        reuploadRequest: sock.updateMediaMessage
+                // Handle TikTok URLs
+                if (messageType === 'conversation' || messageType === 'extendedTextMessage') {
+                    const text = messageType === 'conversation' ? messageContent : messageContent.text;
+                    const tiktokRegex = /https?:\/\/((?:vm|vt|www)\.)?tiktok\.com\/[^\s]+/i;
+
+                    if (tiktokRegex.test(text)) {
+                        const url = text.match(tiktokRegex)[0];
+                        await sock.sendMessage(chatId, { text: 'Sedang mengunduh video TikTok...' });
+
+                        try {
+                            const videoBuffer = await downloadTikTok(url);
+                            await sock.sendMessage(chatId, {
+                                video: videoBuffer,
+                                caption: '✅ Download berhasil!'
+                            });
+                        } catch (error) {
+                            await sock.sendMessage(chatId, {
+                                text: '❌ Gagal mengunduh video TikTok. Silakan coba lagi.'
+                            });
+                        }
+                        return;
                     }
-                );
+                }
 
-                // Process media
-                const processedBuffer = messageType === 'imageMessage' 
-                    ? await processImage(buffer)
-                    : await processVideo(buffer);
+                // Handle media to sticker conversion
+                if (messageType === 'imageMessage' || messageType === 'videoMessage') {
+                    await sock.sendMessage(chatId, { text: 'Sedang membuat sticker...' });
 
-                // Create sticker with compatibility settings
-                const sticker = new Sticker(processedBuffer, {
-                    pack: 'boyle anak tonggi',
-                    author: 'boyle anak tonggi',
-                    type: messageType === 'videoMessage' ? StickerTypes.ANIMATED : StickerTypes.FULL,
-                    categories: ['🤩'],
-                    id: 'sticker-bot',
-                    quality: 50,
-                    background: '#00000000'
-                });
+                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { 
+                        logger: pino({ level: 'silent' }),
+                        reuploadRequest: sock.updateMediaMessage
+                    });
 
-                // Convert to buffer with better compatibility
-                const stickerBuffer = await sticker.toBuffer();
+                    const processedBuffer = messageType === 'imageMessage'
+                        ? await processImageForSticker(buffer)
+                        : await processVideoForSticker(buffer);
 
-                // Save sticker
-                const filename = `sticker_${Date.now()}.webp`;
-                await writeFile(path.join('stickers', filename), stickerBuffer);
+                    const stickerBuffer = await createSticker(processedBuffer, messageType === 'videoMessage');
 
-                // Send sticker
-                await sock.sendMessage(
-                    msg.key.remoteJid,
-                    { sticker: stickerBuffer }
-                );
-
+                    await sock.sendMessage(chatId, { sticker: stickerBuffer });
+                }
             } catch (error) {
-                console.error('Error processing sticker:', error);
-                await sock.sendMessage(
-                    msg.key.remoteJid,
-                    { text: 'Maaf, gagal membuat sticker. Silakan coba lagi.' }
-                );
+                console.error('Error processing message:', error);
+                await sock.sendMessage(chatId, {
+                    text: '❌ Terjadi kesalahan. Silakan coba lagi.'
+                });
             }
-        }
+        });
     });
 }
 
-// Create stickers directory if it doesn't exist
-if (!fs.existsSync('./stickers')){
-    fs.mkdirSync('./stickers');
+// Initialize and start the bot
+async function startBot() {
+    try {
+        createRequiredDirectories();
+        cleanTempDirectory();
+        await connectToWhatsApp();
+    } catch (error) {
+        console.error('Failed to start bot:', error);
+        process.exit(1);
+    }
 }
 
-// Start the bot
-connectToWhatsApp().catch(err => console.log('Unexpected error:', err));
+startBot();
+
+// Clean up on exit
+process.on('SIGINT', async () => {
+    console.log('Cleaning up...');
+    cleanTempDirectory();
+    process.exit(0);
+});
