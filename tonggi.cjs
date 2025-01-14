@@ -10,56 +10,87 @@ const P = require('pino');
 const { writeFile } = require('fs/promises');
 const { Sticker, StickerTypes } = require('wa-sticker-formatter');
 const sharp = require('sharp');
-const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+const { promisify } = require('util');
+const exec = promisify(require('child_process').exec);
 
-// Function to process image to square
-async function processImageToSquare(buffer) {
+// Function to process image
+async function processImage(buffer) {
     const image = sharp(buffer);
     const metadata = await image.metadata();
     
-    const size = Math.min(Math.max(metadata.width, metadata.height), 512);
+    // Ensure width and height are within WhatsApp sticker limits (max 512px)
+    const maxSize = 512;
+    let width = metadata.width;
+    let height = metadata.height;
+    
+    if (width > maxSize || height > maxSize) {
+        const ratio = Math.min(maxSize / width, maxSize / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+    }
     
     return await image
-        .resize(size, size, {
-            fit: 'cover', // Changed to cover to fill the square
-            position: 'center'
+        .resize(width, height, {
+            fit: 'contain',
+            background: { r: 0, g: 0, b: 0, alpha: 0 }
         })
         .toBuffer();
 }
 
-// Function to process video to square
-function processVideoToSquare(inputBuffer) {
-    return new Promise((resolve, reject) => {
-        const tempInput = `temp_input_${Date.now()}.mp4`;
-        const tempOutput = `temp_output_${Date.now()}.mp4`;
+// Function to process video
+async function processVideo(inputBuffer) {
+    const tempPath = `temp_${Date.now()}`;
+    if (!fs.existsSync(tempPath)) {
+        fs.mkdirSync(tempPath);
+    }
+
+    const inputFile = path.join(tempPath, 'input.mp4');
+    const outputFile = path.join(tempPath, 'output.webp');
+    
+    try {
+        // Write input buffer to temporary file
+        fs.writeFileSync(inputFile, inputBuffer);
         
-        fs.writeFileSync(tempInput, inputBuffer);
-        
-        ffmpeg(tempInput)
-            .size('512x512')
-            .addOptions([
-                '-c:v libx264',
-                '-crf 20',
-                '-movflags faststart',
-                '-pix_fmt yuv420p',
-                '-vf "scale=512:512:force_original_aspect_ratio=increase,crop=512:512"' // Changed to crop for square output
-            ])
-            .toFormat('mp4')
-            .on('end', () => {
-                const outputBuffer = fs.readFileSync(tempOutput);
-                fs.unlinkSync(tempInput);
-                fs.unlinkSync(tempOutput);
-                resolve(outputBuffer);
-            })
-            .on('error', (err) => {
-                if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
-                if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
-                reject(err);
-            })
-            .save(tempOutput);
-    });
+        // Convert video to WebP using FFmpeg
+        await new Promise((resolve, reject) => {
+            ffmpeg(inputFile)
+                .addOutputOptions([
+                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,fps=12',
+                    '-vcodec', 'libwebp',
+                    '-lossless', '0',
+                    '-compression_level', '6',
+                    '-q:v', '50',
+                    '-loop', '0',
+                    '-preset', 'default',
+                    '-an',
+                    '-vsync', '0',
+                    '-t', '5' // Limit to 5 seconds
+                ])
+                .toFormat('webp')
+                .on('end', resolve)
+                .on('error', reject)
+                .save(outputFile);
+        });
+
+        // Read the processed file
+        const processedBuffer = fs.readFileSync(outputFile);
+
+        // Cleanup
+        fs.unlinkSync(inputFile);
+        fs.unlinkSync(outputFile);
+        fs.rmdirSync(tempPath);
+
+        return processedBuffer;
+    } catch (error) {
+        // Cleanup on error
+        if (fs.existsSync(inputFile)) fs.unlinkSync(inputFile);
+        if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile);
+        if (fs.existsSync(tempPath)) fs.rmdirSync(tempPath);
+        throw error;
+    }
 }
 
 // Function to handle connection
@@ -69,7 +100,8 @@ async function connectToWhatsApp() {
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
-        logger: P({ level: 'silent' })
+        logger: P({ level: 'silent' }),
+        browser: ['Chrome (Linux)', '', ''] // Fix some connection issues
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -113,25 +145,26 @@ async function connectToWhatsApp() {
                     }
                 );
 
-                // Process media to square format
+                // Process media
                 const processedBuffer = messageType === 'imageMessage' 
-                    ? await processImageToSquare(buffer)
-                    : await processVideoToSquare(buffer);
+                    ? await processImage(buffer)
+                    : await processVideo(buffer);
 
-                // Create sticker
+                // Create sticker with compatibility settings
                 const sticker = new Sticker(processedBuffer, {
                     pack: 'boyle anak tonggi',
                     author: 'boyle anak tonggi',
-                    type: StickerTypes.FULL,
-                    categories: ['🤩', '🎉'],
-                    quality: 75, // Increased quality
-                    crop: false // Disable additional cropping
+                    type: messageType === 'videoMessage' ? StickerTypes.ANIMATED : StickerTypes.FULL,
+                    categories: ['🤩'],
+                    id: 'sticker-bot',
+                    quality: 50,
+                    background: '#00000000'
                 });
 
-                // Convert to buffer
+                // Convert to buffer with better compatibility
                 const stickerBuffer = await sticker.toBuffer();
 
-                // Save sticker locally
+                // Save sticker
                 const filename = `sticker_${Date.now()}.webp`;
                 await writeFile(path.join('stickers', filename), stickerBuffer);
 
@@ -145,7 +178,7 @@ async function connectToWhatsApp() {
                 console.error('Error processing sticker:', error);
                 await sock.sendMessage(
                     msg.key.remoteJid,
-                    { text: 'Maaf, gagal membuat sticker.' }
+                    { text: 'Maaf, gagal membuat sticker. Silakan coba lagi.' }
                 );
             }
         }
