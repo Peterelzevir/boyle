@@ -1,4 +1,3 @@
-// index.js
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -74,11 +73,11 @@ const cleanTempDirectory = () => {
 async function processImageForSticker(buffer) {
     const image = sharp(buffer);
     const metadata = await image.metadata();
-    
+
     const maxSize = 512;
     let width = metadata.width;
     let height = metadata.height;
-    
+
     if (width > maxSize || height > maxSize) {
         if (width > height) {
             height = Math.round((height * maxSize) / width);
@@ -195,11 +194,11 @@ async function connectToWhatsApp() {
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
-        
+
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Connection closed due to:', lastDisconnect?.error, 'Reconnecting:', shouldReconnect);
-            
+
             if (shouldReconnect) {
                 connectToWhatsApp();
             }
@@ -247,7 +246,7 @@ async function connectToWhatsApp() {
                 if (messageType === 'imageMessage' || messageType === 'videoMessage') {
                     await sock.sendMessage(chatId, { text: 'Sedang membuat sticker...' });
 
-                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { 
+                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
                         logger: pino({ level: 'silent' }),
                         reuploadRequest: sock.updateMediaMessage
                     });
